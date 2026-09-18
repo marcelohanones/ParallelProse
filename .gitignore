@@ -5,6 +5,7 @@ build/
 dist/
 wheels/
 *.egg-info
+src/ParallelProse/temp.py
 
 # Virtual environments
 .venv

@@ -3,18 +3,23 @@ import warnings
 from typing import TypedDict
 
 from dotenv import load_dotenv
+from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
-from ParallelProse.mcp_tools import PORT, http_client, mcp
+from ParallelProse.mcp_tools import PORT, http_client, mcp, mcp_tools_as_langchain_tools
 
 warnings.filterwarnings("ignore")
 load_dotenv()
 
-llm=ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
 
 MAX_ITERATIONS = 5
+
+bridged_tools = None
+retrieval_agent = None
 
 class ReflectionState(TypedDict):
     query: str
@@ -38,8 +43,14 @@ class Critique(BaseModel):
     )
 
 
-async def retriever(state: ReflectionState) -> dict:
-    """This function retrieves chunks over a query via the MCP retrieval server."""
+async def retriever(state: ReflectionState):
+    """TODO This function retrieves chunks over a query via the MCP retrieval server."""
+    global bridged_tools, retrieval_agent
+    if bridged_tools is None:
+        bridged_tools = await mcp_tools_as_langchain_tools(http_client)
+    if retrieval_agent is None:
+        retrieval_agent = create_agent(model=llm, tools=bridged_tools)
+
     if state.get("narrowed_query"):
         argument = state["narrowed_query"]
     else:
@@ -52,6 +63,7 @@ async def retriever(state: ReflectionState) -> dict:
     }
 
 
+
 def composer(state: ReflectionState):
     """
     This function composes an answer for: retrieved chunks from a query|narrowed_query, a Critique
@@ -61,21 +73,21 @@ def composer(state: ReflectionState):
     context = docs
     # narrowed_retriever → composer
     # critique narrowed_query + chunks
-    if state["narrowed_query"] and state["needs_revision"]:# new chunks
+    if state["narrowed_query"] and state["needs_revision"]:  # new chunks
         prompt = f"Given this context {context}, the query {state['narrowed_query']},  and the previous answer{state['answer']} , critique to adress this feedback {state['feedback']}"
 
         # context , query, feedback , previous answer
 
     # switch → composer (direct revise branch)
-    elif state["needs_revision"]:#  old chunks
+    elif state["needs_revision"]:  #  old chunks
         prompt = f"Given this context {context}, the query {state['query']} and the previous answer{state['answer']} critique to adress this feedback {state['feedback']}"
     # retriever → composer
-    # no critique, 
+    # no critique,
     else:
         prompt = f"Given this context {context}, write a short (3-4 sentence) factual note on: {state['query']}"
 
     answer = llm.invoke(prompt).content
-    return {"answer": answer, "iteration": state.get("iteration",0) + 1}
+    return {"answer": answer, "iteration": state.get("iteration", 0) + 1}
 
 
 def reflect(state: ReflectionState):
@@ -99,7 +111,6 @@ def route_after_reflection(state: ReflectionState):
     if state["narrowed_query"]:
         return "retriever"
     return "composer"
-
 
 
 reflection_graph = StateGraph(ReflectionState)
@@ -141,4 +152,24 @@ if __name__ == "__main__":
 
         server_task.cancel()
 
-    asyncio.run(run())
+    # asyncio.run(run())
+
+
+    async def test_retriever():
+        server_task = asyncio.create_task(
+                    mcp.run_http_async(port=PORT, show_banner=False, log_level="critical")
+                )
+        await asyncio.sleep(1.0)
+        global bridged_tools, retrieval_agent
+        if bridged_tools is None:
+            bridged_tools = await mcp_tools_as_langchain_tools(http_client)
+        if retrieval_agent is None:
+            retrieval_agent = create_agent(model=llm, tools=bridged_tools)
+    
+        result = await retrieval_agent.ainvoke(
+                {"messages": [HumanMessage(content="em quais capitulos o autor fala sobre fortuna?")]}
+            )
+        print(result["messages"][-1].content)
+        server_task.cancel()
+
+    asyncio.run(test_retriever())

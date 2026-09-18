@@ -7,7 +7,22 @@ authors = [
     { name = "Marcelo Hanones", email = "marcelohanones@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "langchain==1.3.15",
+    "langchain-openai==1.5.1",
+    "langchain-core==1.5.5",
+    "langchain-classic==1.0.8",
+    "langchain-community==0.4.2",
+    "langchain-text-splitters==1.1.2",
+    "langgraph==1.2.11",
+    "fastmcp==4.0.3",
+    "chromadb==1.5.9",
+    "onnxruntime==1.23.2",
+    "pypdf==4.2.0",
+    "lark==1.3.1",
+    "pydantic==2.13.4",
+    "python-dotenv==1.2.2",
+]
 
 [project.scripts]
 parallelprose = "ParallelProse:main"
