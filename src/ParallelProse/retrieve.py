@@ -131,7 +131,7 @@ class Retrieval:
         return [AttributeInfo(name="chapter", description="the chapter it belongs", type="string")]
 
     def make_search_self_query(self, query: str, description: str) -> list[Document]:
-        """This function retrieves child chunks through SelfQueryRetriever, fetch it's id's and returns the correspondent parents in a list."""
+        """This function retrieves child chunks through SelfQueryRetriever, fetch it's id's and returns the correspondent parent chunks in a list."""
         retriever = SelfQueryRetriever.from_llm(
             self.llm,
             self.vector_store,

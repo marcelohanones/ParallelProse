@@ -21,7 +21,9 @@ llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
 
 MAX_ITERATIONS = 5
 MAX_TOOL_CALLS = 4
+FALLBACK_TOOL = "call_parent_retriever"
 
+system_prompt = " You must call at least one retrieval tool before finishing. You must not answer from your own knowledge, passages from the corpus are the only source. If the query looks impossible or wrong, you must still do the search. Use the query as given, only allow minor changes in the wording if it is to make it clearer. If a retrieval tool returns no results or an error, try a different retrieval tool."
 bridged_tools = None
 retrieval_agent = None
 
@@ -47,9 +49,12 @@ class Critique(BaseModel):
     )
 
 
+# MARK: RETRIEVER
 async def retriever(state: ReflectionState):
-    """TODO This function retrieves chunks over a query via the MCP retrieval server."""
+    """This function retrieves chunks over a query. It works via a MCP retrieval server that picks a retrieval tool. """
+
     global bridged_tools, retrieval_agent
+
     if bridged_tools is None:
         bridged_tools = await mcp_tools_as_langchain_tools(http_client)
     if retrieval_agent is None:
@@ -60,6 +65,7 @@ async def retriever(state: ReflectionState):
                 ModelCallLimitMiddleware(run_limit=MAX_ITERATIONS),
                 ToolCallLimitMiddleware(run_limit=MAX_TOOL_CALLS, exit_behavior="end"),
             ],
+            system_prompt=system_prompt,
         )
     if state["narrowed_query"]:
         argument = state["narrowed_query"]
@@ -70,24 +76,40 @@ async def retriever(state: ReflectionState):
         )
     chunks_list = []
     tool_call_ids = set([])
+    lineage_dict = []
+
     for msg in result["messages"]:
         if isinstance(msg, ToolMessage) and msg.status == "success":
             chunks_list.extend(json.loads(msg.content))
             tool_call_ids.add(msg.tool_call_id)
 
-    lineage_dict = []
+                
+
     for msg in result["messages"]:
         if isinstance(msg, AIMessage):
             for tc in msg.tool_calls:
                 if tc["id"] in tool_call_ids:
                     lineage_dict.append({"iteration": state.get("iteration", 0),
                                         "tool": tc["name"],
-                                        "args": tc["args"]
+                                        "args": tc["args"],
+                                        "forced_retriever": False
                                         })  
+    # forcing retriever
+    if not chunks_list:
+        async with http_client as client:
+                    r = await client.call_tool(FALLBACK_TOOL,
+                                       {"query":argument})
+                    chunks_list.extend(r.data)
+                    lineage_dict.append(
+                        {
+                            "iteration": state.get("iteration", 0),
+                            "tool": "call_parent_retriever",
+                            "args": {"query": argument},
+                            "forced_retriever": True
+                        }
+                    )
     return {"chunks": chunks_list, "lineage": state.get("lineage", []) + lineage_dict}
     
-
-
 
 def composer(state: ReflectionState):
     """
@@ -155,17 +177,19 @@ if __name__ == "__main__":
 
     def show(step: dict, width: int = 100):
         for node, update in step.items():
-            print(f"\n── {node} ──")
+            print(f"\n________{node.upper()} >>>")
             for key, val in update.items():
                 if key == "chunks":
                     print(f"  chunks: {len(val)} items")
                 elif key == "lineage":
                     for e in val:
-                        print(f"  lineage: it={e['iteration']} {e['tool']} {e['args']}")
+                        print(
+                            f"\n_lineage: it={e['iteration']} {e['tool']} {e['args']}, forced: {e['forced_retriever']}"
+                        )
                 elif isinstance(val, str) and len(val) > width:
-                    print(f"  {key}: {val[:width]}…")
+                    print(f"_{key}: {val[:width]}…")
                 else:
-                    print(f"  {key}: {val}")
+                    print(f"_{key}: {val}")
     
 
     async def run():
@@ -192,9 +216,9 @@ if __name__ == "__main__":
             
         server_task.cancel()
 
-    asyncio.run(run())
 
 
+#MARK: TESTS
     async def test_retriever(state):
         server_task = asyncio.create_task(
                     mcp.run_http_async(port=PORT, show_banner=False, log_level="critical")
@@ -206,14 +230,11 @@ if __name__ == "__main__":
         finally:
             server_task.cancel()
 
-    # asyncio.run(test_retriever(state))
 
 
 
     async def test_accumulation():
-        server_task = asyncio.create_task(
-            mcp.run_http_async(port=PORT, show_banner=False, log_level="critical")
-        )
+        server_task = asyncio.create_task(mcp.run_http_async(port=PORT, show_banner=False, log_level="critical"))
         await asyncio.sleep(1.0)
         try:
             state = {
@@ -240,4 +261,22 @@ if __name__ == "__main__":
             server_task.cancel()
 
 
+
+    async def test_retriever_2():
+        server_task = asyncio.create_task(mcp.run_http_async(port=PORT, show_banner=False, log_level="critical"))
+
+        await asyncio.sleep(1.0)
+
+        async with http_client as client:
+            r = await client.call_tool("call_parent_retriever",
+                               {"query": "when and why Niccolò Machiavelli wrote The Lion"})
+        print(len(r.data)); print(r.data[0][:200])
+
+
+#MARK: CALLERS
+    asyncio.run(run())
+    # asyncio.run(test_retriever(state))
     # asyncio.run(test_accumulation())
+    # asyncio.run(test_retriever_2())
+
+

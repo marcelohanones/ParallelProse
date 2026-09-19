@@ -21,21 +21,33 @@ retrieval_obj.add_parent_child_docs()
 # // TOOLS
 @mcp.tool
 def call_parent_retriever(query: str) -> list[str]:
+    """Semantic search: matches the query against small child chunks by meaning and returns their larger parent chunks, so each result comes with surrounding context.
+    Use it by default, for concepts, themes and open questions (e.g. "what does the author say about a subject ?"), where the wording of the query may differ from the wording of the text.
+    Avoid it when the query hinges on one exact name or word; use call_bm_25_retriever for that."""
     return [i.page_content for i in retrieval_obj.parent_retriever.invoke(query)]
 
 
 @mcp.tool
 def call_search_self_query(query: str, description: str) -> list[str]:
+    """Filtered semantic search: turns the query into a similarity search plus a metadata filter on `chapter`, then returns the parent chunks of the matches.
+    Use it only when the query names a specific chapter (e.g. "what does chapter 25 say about fortune?"); otherwise the filter has nothing to filter on.
+    `description` is one short sentence saying what the corpus text is (e.g. "A chunk of text from Machiavelli's 'The Prince'"); it is not the query."""
     return [i.page_content for i in retrieval_obj.make_search_self_query(query, description)]
 
 
 @mcp.tool
 def call_bm_25_retriever(query: str) -> list[str]:
+    """Exact keyword match (BM25): ranks chunks by how many of the query's words they contain, with no understanding of meaning.
+    Use it when the query hinges on a specific name, title, rare word or quoted phrase (e.g. "Cesare Borgia").
+    Avoid it for paraphrased or conceptual questions: a synonym or a different wording will not match, and it can return nothing relevant."""
     return [i.page_content for i in retrieval_obj.make_bm_25_retriever().invoke(query)]
 
 
 @mcp.tool
 def call_ensemble_retriever(query: str) -> list[str]:
+    """Hybrid search: blends call_bm_25_retriever and call_parent_retriever, weighting each 0.5, so results can match by meaning and by exact words.
+    Use it when the query mixes a concept with a specific name or term (e.g. "Borgia's rise and what it teaches about fortune"), or when neither single method fits.
+    It is slower than either one alone, so prefer a single retriever when the query clearly fits one."""
     return [i.page_content for i in retrieval_obj.make_ensemble_retriever().invoke(query)]
 
 
