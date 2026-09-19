@@ -21,3 +21,6 @@ src/ParallelProse/temp.py
 
 # Data
 /data
+
+# IDEs
+.idea/
