@@ -2,8 +2,10 @@
 
 ## Where we are
 
-- **v1 (frozen, 2026-08-07)** — single corpus, two separate agents: a fixed reflect-loop graph and a tool-flexible MCP demo agent. No comparison capability, no quality loop on the flexible agent.
-- **v2 (designed, not yet built)** — merges the two agents into one graph and generalizes it to compare two corpora ("Parallel Prose": what do two books say about an issue).
+**Project started 2026-08-07.**
+
+- **v1 (frozen, 2026-09-16)** — single corpus, two separate agents: a fixed reflect-loop graph and a tool-flexible MCP demo agent. No comparison capability, no quality loop on the flexible agent.
+- **v2 (in progress)** — merges the two agents into one graph and generalizes it to compare two corpora ("Parallel Prose": what do two books say about an issue). Item 1 (the merge) is done as of 2026-09-19; items 2–6 are designed, not yet built.
 - **v3 (backlog)** — discussed and deliberately deferred, not forgotten.
 - **RAG-Tetris** — a separate future project (comparing code across versions), out of scope here.
 
@@ -12,6 +14,12 @@ Suggested build order below follows dependency, not memory-entry order: state sh
 ## v2 — next up
 
 ### 1. Architecture merge — retriever becomes a nested tool-selecting agent
+**Status: done, 2026-09-19.** The outer graph (`composer`, `reflect`, routing) needed no changes; only `retriever` did. Built as designed, plus what the merge turned out to need:
+- The inner agent is bounded by `ToolCallLimitMiddleware` (`exit_behavior="end"`) and `ModelCallLimitMiddleware`.
+- `chunks` come from the successful `ToolMessage`s, and `lineage` (`iteration`, `tool`, `args`) replaced `chunks_id`.
+- Because the model can now skip retrieval, which v1 never allowed: a `system_prompt`, tool docstrings written as when-to-use rules, and a fallback that calls `call_parent_retriever` when no chunks come back.
+- Open, deliberately left for item 4: an impossible query still uses up `MAX_ITERATIONS` with no resolution, and `reflect` grades the draft without seeing the chunks.
+
 **What:** keep the existing outer graph (`ReflectionState` → `composer` → `reflect`, conditional retry) exactly as-is. The only structural change: `retriever` stops hardcoding one retrieval call and becomes a small inner `create_agent` that picks among the 4 existing retrieval strategies, bounded by `ToolCallLimitMiddleware`.
 **Why:** two agents currently prove two different things (tool-flexible retrieval vs. a quality-refinement loop) with no reason to keep them apart once seen clearly — one already has the loop, the other already has the flexibility.
 **Synergy:** this is the chassis. Every item below assumes this merged graph exists.
