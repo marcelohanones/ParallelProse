@@ -4,10 +4,13 @@ from typing import TypedDict
 
 from dotenv import load_dotenv
 from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, ChatMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
+from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
+import json
+
 
 from ParallelProse.mcp_tools import PORT, http_client, mcp, mcp_tools_as_langchain_tools
 
@@ -17,6 +20,7 @@ load_dotenv()
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
 
 MAX_ITERATIONS = 5
+MAX_TOOL_CALLS = 4
 
 bridged_tools = None
 retrieval_agent = None
@@ -28,7 +32,7 @@ class ReflectionState(TypedDict):
     needs_revision: bool
     feedback: str
     chunks: list[str]
-    chunks_id: int
+    lineage: list[dict]
     iteration: int
 
 
@@ -49,18 +53,39 @@ async def retriever(state: ReflectionState):
     if bridged_tools is None:
         bridged_tools = await mcp_tools_as_langchain_tools(http_client)
     if retrieval_agent is None:
-        retrieval_agent = create_agent(model=llm, tools=bridged_tools)
-
-    if state.get("narrowed_query"):
+        retrieval_agent = create_agent(
+            model=llm,
+            tools=bridged_tools,
+            middleware=[
+                ModelCallLimitMiddleware(run_limit=MAX_ITERATIONS),
+                ToolCallLimitMiddleware(run_limit=MAX_TOOL_CALLS, exit_behavior="end"),
+            ],
+        )
+    if state["narrowed_query"]:
         argument = state["narrowed_query"]
     else:
         argument = state["query"]
-    async with http_client as client:
-        result = await client.call_tool("call_parent_retriever", {"query": argument})
-    return {
-        "chunks": result.data,
-        "chunks_id": state.get("chunks_id", 0) + 1,
-    }
+    result = await retrieval_agent.ainvoke(
+            {"messages": [HumanMessage(content=argument)]}
+        )
+    chunks_list = []
+    tool_call_ids = set([])
+    for msg in result["messages"]:
+        if isinstance(msg, ToolMessage) and msg.status == "success":
+            chunks_list.extend(json.loads(msg.content))
+            tool_call_ids.add(msg.tool_call_id)
+
+    lineage_dict = []
+    for msg in result["messages"]:
+        if isinstance(msg, AIMessage):
+            for tc in msg.tool_calls:
+                if tc["id"] in tool_call_ids:
+                    lineage_dict.append({"iteration": state.get("iteration", 0),
+                                        "tool": tc["name"],
+                                        "args": tc["args"]
+                                        })  
+    return {"chunks": chunks_list, "lineage": state.get("lineage", []) + lineage_dict}
+    
 
 
 
@@ -126,7 +151,22 @@ reflection_app = reflection_graph.compile()
 
 
 if __name__ == "__main__":
-    print(reflection_app.get_graph().draw_mermaid())
+    # print(reflection_app.get_graph().draw_mermaid())
+
+    def show(step: dict, width: int = 100):
+        for node, update in step.items():
+            print(f"\n── {node} ──")
+            for key, val in update.items():
+                if key == "chunks":
+                    print(f"  chunks: {len(val)} items")
+                elif key == "lineage":
+                    for e in val:
+                        print(f"  lineage: it={e['iteration']} {e['tool']} {e['args']}")
+                elif isinstance(val, str) and len(val) > width:
+                    print(f"  {key}: {val[:width]}…")
+                else:
+                    print(f"  {key}: {val}")
+    
 
     async def run():
         server_task = asyncio.create_task(
@@ -137,39 +177,67 @@ if __name__ == "__main__":
         # astream instead of ainvoke — see each node's output as it happens
         async for step in reflection_app.astream(
             {
-                "query": "when and why Niccolò Machiavelli wrote The Prince",
+                "query": "when and why Niccolò Machiavelli wrote The Lion",
+                "narrowed_query": None,
+                "answer": "",
+                "needs_revision": False,
+                "feedback": "",
+                "chunks": None,
+                "lineage": [],
+                "iteration": 0,
+            },
+            stream_mode="updates",
+        ):
+            show(step)
+            
+        server_task.cancel()
+
+    asyncio.run(run())
+
+
+    async def test_retriever(state):
+        server_task = asyncio.create_task(
+                    mcp.run_http_async(port=PORT, show_banner=False, log_level="critical")
+                )
+        await asyncio.sleep(1.0)
+        try:
+            state = {"query": "em quais capitulos o autor fala sobre fortuna?", "narrowed_query": None,"answer": "", "feedback": "", "needs_revision": False, "chunks": None, "lineage": [], "iteration": 0}
+            return await retriever(state)
+        finally:
+            server_task.cancel()
+
+    # asyncio.run(test_retriever(state))
+
+
+
+    async def test_accumulation():
+        server_task = asyncio.create_task(
+            mcp.run_http_async(port=PORT, show_banner=False, log_level="critical")
+        )
+        await asyncio.sleep(1.0)
+        try:
+            state = {
+                "query": "em quais capitulos o autor fala sobre fortuna?",
                 "narrowed_query": None,
                 "answer": "",
                 "feedback": "",
                 "needs_revision": False,
                 "chunks": None,
-                "chunks_id": 0,
+                "lineage": [],
                 "iteration": 0,
-            },
-            stream_mode="updates",
-        ):
-            print(step)
+            }
 
-        server_task.cancel()
+            r1 = await retriever(state)
+            state = {**state, **r1}  # what LangGraph does with the node's return
+            print("round 1:", state["lineage"])
 
-    # asyncio.run(run())
+            state["iteration"] = 1  # composer would have bumped this
+            state["narrowed_query"] = "fortuna no capítulo XXV"
+            r2 = await retriever(state)
+            state = {**state, **r2}
+            print("round 2:", state["lineage"])
+        finally:
+            server_task.cancel()
 
 
-    async def test_retriever():
-        server_task = asyncio.create_task(
-                    mcp.run_http_async(port=PORT, show_banner=False, log_level="critical")
-                )
-        await asyncio.sleep(1.0)
-        global bridged_tools, retrieval_agent
-        if bridged_tools is None:
-            bridged_tools = await mcp_tools_as_langchain_tools(http_client)
-        if retrieval_agent is None:
-            retrieval_agent = create_agent(model=llm, tools=bridged_tools)
-    
-        result = await retrieval_agent.ainvoke(
-                {"messages": [HumanMessage(content="em quais capitulos o autor fala sobre fortuna?")]}
-            )
-        print(result["messages"][-1].content)
-        server_task.cancel()
-
-    asyncio.run(test_retriever())
+    # asyncio.run(test_accumulation())
