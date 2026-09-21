@@ -23,6 +23,8 @@ dependencies = [
     "pydantic==2.13.4",
     "python-dotenv==1.2.2",
     "rank-bm25>=0.2.2",
+    "ebooklib>=0.20",
+    "beautifulsoup4>=4.15.0",
 ]
 
 [project.scripts]
