@@ -1,5 +1,6 @@
 import asyncio
 import warnings
+from operator import contains
 from typing import TypedDict
 
 from dotenv import load_dotenv
@@ -128,7 +129,7 @@ def composer(state: ReflectionState):
     # narrowed_retriever → composer
     # critique narrowed_query + chunks
     if state["corpora"][CORPUS_ID]["narrowed_query"] and state["needs_revision"]:  # new chunks
-        prompt = f"Given this context {context}, the query {state["corpora"][CORPUS_ID]['narrowed_query']},  and the previous answer{state['answer']} , critique to address this feedback {state['feedback']}"
+        prompt = f"Given this context {context}, the query {state['corpora'][CORPUS_ID]['narrowed_query']},  and the previous answer{state['answer']} , critique to address this feedback {state['feedback']}"
 
         # context , query, feedback , previous answer
 
@@ -154,7 +155,10 @@ def reflect(state: ReflectionState):
     return {
         "feedback": critique.feedback,
         "needs_revision": critique.needs_revision,
-        state["corpora"][CORPUS_ID]["narrowed_query"]: critique.narrowed_query,
+        "corpora":    {CORPUS_ID: {
+                "chunks": state["corpora"][CORPUS_ID]["chunks"],
+                "lineage": state["corpora"][CORPUS_ID]["lineage"],
+                "narrowed_query": critique.narrowed_query}}
     }
 
 
@@ -185,20 +189,19 @@ if __name__ == "__main__":
     def show(step: dict, width: int = 100):
         for node, update in step.items():
             print(f"\n________{node.upper()} >>>")
-            for key, val in update.items():
-                print(1)
-                # if key == ["corpora][CORPUS_ID]["chunks"]:
-                #     print(f"  chunks: {len(val)} items")
-                # elif key == ["corpora][CORPUS_ID]["lineage"]:
-                #     for e in val:
-                #         print(
-                #             f"\n_lineage: it={e['iteration']} {e['tool']} {e['args']}, forced: {e['forced_retriever']}"
-                #         )
-                # elif isinstance(val, str) and len(val) > width:
-                #     print(f"_{key}: {val[:width]}…")
-                # else:
-                #     print(f"_{key}: {val}")
-    
+            if node == "retriever":
+                print(f"""_Chunks: {len(update["corpora"][CORPUS_ID]["chunks"])} items""")
+            if node == "composer":
+                print(f"""  _Answer: {update["answer"][:width]}""")
+            if node == "reflect":
+                print(f"""_Chunks: {len(update["corpora"][CORPUS_ID]["chunks"])} items""")
+                print(f"""      _Feedback:  {update["feedback"][:width]}""")
+                print(f"""\n        _Needs_revision: {update["needs_revision"]}""")
+                print(f"""\n            _Narrowed_query: {update["corpora"][CORPUS_ID]["narrowed_query"]}""")
+                for item in update["corpora"][CORPUS_ID]["lineage"]:
+                    print(f"""\n_It: {item["iteration"]}, Tool: {item["tool"]}, Query: {item["args"]["query"]}, Forced: {item["forced_retriever"]} """)
+
+                print("\n          _____________________________________________________________________________________________\n")
 
     async def run():
         server_task = asyncio.create_task(
@@ -222,7 +225,7 @@ if __name__ == "__main__":
             },
             stream_mode="updates",
         ):
-            print(step)
+            show(step)
             
         server_task.cancel()
 
