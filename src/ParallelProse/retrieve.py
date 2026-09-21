@@ -1,10 +1,13 @@
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import os
 import warnings
 from dataclasses import asdict, dataclass
 
 import chromadb
 from chromadb.errors import NotFoundError
-from dotenv import load_dotenv
 from langchain_classic.chains.query_constructor.base import AttributeInfo
 from langchain_classic.retrievers import (
     EnsembleRetriever,
@@ -22,7 +25,6 @@ from langchain_text_splitters import CharacterTextSplitter
 from ParallelProse.ingest import PDF_PATH, REPO_ROOT, load_corpus
 
 warnings.filterwarnings("ignore")
-load_dotenv()
 
 CHROMA_PERSIST_DIR = REPO_ROOT / "data" / "chroma_demo_c1_project"
 
@@ -37,19 +39,19 @@ class SplitterConfig:
 
 class Retrieval:
     def __init__(
-        self,
-        collection_name,
-        pdf_path,
-        llm=ChatOpenAI(model="gpt-4o-mini", temperature=0.5),
-        child_config=SplitterConfig(chunk_size=400, chunk_overlap=50),
-        parent_config=SplitterConfig(chunk_size=4000, chunk_overlap=100),
-        persist_directory=CHROMA_PERSIST_DIR,
-        embedding_model=OpenAIEmbeddings(
-            model="text-embedding-3-small", api_key=os.environ.get("OPENAI_API_KEY")
-        ),
+            self,
+            collection_name,
+            source_path,
+            llm=ChatOpenAI(model="gpt-4o-mini", temperature=0.5),
+            child_config=SplitterConfig(chunk_size=400, chunk_overlap=50),
+            parent_config=SplitterConfig(chunk_size=4000, chunk_overlap=100),
+            persist_directory=CHROMA_PERSIST_DIR,
+            embedding_model=OpenAIEmbeddings(
+                model="text-embedding-3-small", api_key=os.environ.get("OPENAI_API_KEY")
+            ),
     ):
         self.collection_name = collection_name
-        self.pdf_path = pdf_path
+        self.source_path = source_path
         self.llm = llm
         self.child_config = child_config
         self.parent_config = parent_config
@@ -87,15 +89,15 @@ class Retrieval:
         )
 
     def add_parent_child_docs(self, rebuild: bool = False):
-        """this function controls wether to build the database. It re-split the corpus to get the expected number of chunks. Then compare it against vector_store and doc_store to avoid unecessary re-embedding.
+        """this function controls wether to build the database. It re-split the corpus to get the expected number of chunks. Then compare it against vector_store and doc_store to avoid unnecessary re-embedding.
         The decision tree is:
         if not rebuild and ==N -> return as is
         everything else -> drop and rebuild"""
 
         # LOADING DATA
-        corpus = load_corpus(str(self.pdf_path))
+        corpus = load_corpus(str(self.source_path))
         retriever_int = self.parent_retriever
-        # RE-SPLITING
+        # RE-SPLITTING
         parent = retriever_int.parent_splitter.split_documents(corpus)
         child = []
         for p in parent:
@@ -131,7 +133,7 @@ class Retrieval:
         return [AttributeInfo(name="chapter", description="the chapter it belongs", type="string")]
 
     def make_search_self_query(self, query: str, description: str) -> list[Document]:
-        """This function retrieves child chunks through SelfQueryRetriever, fetch it's id's and returns the correspondent parent chunks in a list."""
+        """This function retrieves child chunks through SelfQueryRetriever, fetch its id's and returns the correspondent parent chunks in a list."""
         retriever = SelfQueryRetriever.from_llm(
             self.llm,
             self.vector_store,
@@ -147,7 +149,7 @@ class Retrieval:
     def make_bm_25_retriever(self):
         """This function creates a BM25 instance retriever."""
         return BM25Retriever.from_documents(
-            documents=load_corpus(str(self.pdf_path)), bm25_params={"k1": 1.5, "b": 0.75}
+            documents=load_corpus(str(self.source_path)), bm25_params={"k1": 1.5, "b": 0.75}
         )
 
     def make_ensemble_retriever(self):
@@ -172,7 +174,7 @@ class Retrieval:
 
 
 if __name__ == "__main__":
-    retrieval_obj = Retrieval(collection_name="class_testing", pdf_path=PDF_PATH)
+    retrieval_obj = Retrieval(collection_name="class_testing", source_path=PDF_PATH)
     retrieval_obj.add_parent_child_docs()
     # description = "A chunk of text from Machiavelli's 'The Prince'"
     # print(retrieval_obj.make_search_self_query("em quais capitulos o autor fala sobre fortuna ?", description))
