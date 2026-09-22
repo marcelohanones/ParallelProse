@@ -9,6 +9,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
+import copy
 
 from ParallelProse.ingest import PDF_PATH, EPUB_PATH
 from ParallelProse.retrieve import Retrieval
@@ -63,13 +64,18 @@ http_client = Client(StreamableHttpTransport(url=f"http://127.0.0.1:{PORT}/mcp")
 
 
 # MARK: BRIDGE TO LANGCHAIN
-async def mcp_tools_as_langchain_tools(client: Client) -> list[StructuredTool]:
+async def mcp_tools_as_langchain_tools(client: Client, corpus: str) -> list[StructuredTool]:
     async with client:
-        mcp_tools = await client.list_tools()  # ask the server for tool's params (input_schema)
+        mcp_tools = await client.list_tools()  # ask the server for tool's params. (has corpus).
 
     def wrap(mcp_tool):
+        dict_no_corpus = copy.deepcopy(mcp_tool.input_schema)
+        dict_no_corpus["properties"].pop("corpus")
+        dict_no_corpus["required"].remove("corpus")
+
         async def call(**kwargs):
             async with client:
+                kwargs["corpus"] = corpus
                 result = await client.call_tool(mcp_tool.name, kwargs)
             return result.data
 
@@ -77,12 +83,18 @@ async def mcp_tools_as_langchain_tools(client: Client) -> list[StructuredTool]:
             coroutine=call,
             name=mcp_tool.name,
             description=mcp_tool.description or "",
-            args_schema=mcp_tool.input_schema,  # the "copy" of input_schema the model sees.
+            args_schema=dict_no_corpus,
+            # the "copy" of input_schema the model sees, without corpus. See the hiding bellow.
         )
 
     result = [wrap(i) for i in mcp_tools]
     return result
 
+
+# The hiding: the motivation is that model's decision on what corpus to use is non-deterministic. So, we hide corpus from model and insert it by code.
+# 1 -  The 1st step is to pop out corpus key from the mcp_tool.input_schema dict (dict_no_corpus) and hand it out to args_schema. So, the model will not see corpus.
+# 2 - the 2nd is, on call function, to add corpus key to kwargs and let closure fills it's value. So the tool sees the corpus.
+# Bottom Line: we hide corpus from the model and put it back for the tool.
 
 async def main():
     server_task = asyncio.create_task(
@@ -94,11 +106,11 @@ async def main():
     async with http_client as client:
         tools = await client.list_tools()
         print("Available Tools over http:", [i.name for i in tools])
-    bridged_tools = await mcp_tools_as_langchain_tools(http_client)
+    bridged_tools = await mcp_tools_as_langchain_tools(http_client, "B")
 
     agent = create_agent(model=ChatOpenAI(model="gpt-4o-mini"), tools=bridged_tools)
     result = await agent.ainvoke(
-        {"messages": [HumanMessage(content="in what chapter the book talks about fortune?")]}
+        {"messages": [HumanMessage(content="In what year was Society of the Spectacle written ?")]}
     )
     print(result["messages"][-1].content)
 
@@ -107,19 +119,36 @@ async def main():
 
 # MARK: Main
 if __name__ == "__main__":
-    # asyncio.run(main())
+    asyncio.run(main())
+
 
     async def test_retriever():
         server_task = asyncio.create_task(mcp.run_http_async(port=PORT, show_banner=False, log_level="critical"))
         await asyncio.sleep(1.0)
         async with http_client as client:
-            r = await client.call_tool("call_parent_retriever", {
-                "query": "in what year Saint Augustine wrote Confessions?",
-                "corpus": "A"
+            pr = await client.call_tool("call_parent_retriever", {
+                "query": "in what year this book was written?",
+                "corpus": "B"
             })
-        print(r.data)
+            print(f""">>> Parent_retriever: {pr.data[0][:200]}""")
 
+            pr = await client.call_tool("call_search_self_query", {
+                "query": "in what year this book was written?",
+                "corpus": "B",
+                "description": "A chunk of text from the book Confessions writen by Saint Augustine"
+            })
+            print(f""">>> Search_self: {pr.data[0][:200]}""")
 
-    asyncio.run(test_retriever())
+            bm = await client.call_tool("call_bm_25_retriever", {
+                "query": "in what year this book was written?",
+                "corpus": "B"
+            })
+            print(f""">>> BM_25: {bm.data[0][:200]}""")
 
-r.data[0][:200]
+            en = await client.call_tool("call_ensemble_retriever", {
+                "query": "in what year this book was written?",
+                "corpus": "B"
+            })
+            print(f""">>> Ensemble_retriever: {en.data[0][:200]}""")
+
+    # asyncio.run(test_retriever())
