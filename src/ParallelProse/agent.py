@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field
 from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
 import json
 
-
 from ParallelProse.mcp_tools import PORT, http_client, mcp, mcp_tools_as_langchain_tools
 
 warnings.filterwarnings("ignore")
@@ -23,16 +22,21 @@ llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
 MAX_ITERATIONS = 5
 MAX_TOOL_CALLS = 4
 FALLBACK_TOOL = "call_parent_retriever"
-CORPUS_ID = "A"
+CORPUS_ID = "B"
 
 system_prompt = " You must call at least one retrieval tool before finishing. You must not answer from your own knowledge, passages from the corpus are the only source. If the query looks impossible or wrong, you must still do the search. Use the query as given, only allow minor changes in the wording if it is to make it clearer. If a retrieval tool returns no results or an error, try a different retrieval tool."
-bridged_tools = None
-retrieval_agent = None
+# bridged_tools = None
+# retrieval_agent = None
+
+bridged_tools_by_corpus = {}
+retrieval_agents_by_corpus = {}
+
 
 class CorpusState(TypedDict):
     chunks: list[str]
     lineage: list[dict]
     narrowed_query: str | None
+
 
 class ReflectionState(TypedDict):
     query: str
@@ -40,8 +44,7 @@ class ReflectionState(TypedDict):
     needs_revision: bool
     feedback: str
     iteration: int
-    corpora: dict[str, CorpusState]   # {"A": {...}} for now
-
+    corpora: dict[str, CorpusState]  # {"A": {...}} for now
 
 
 class Critique(BaseModel):
@@ -57,68 +60,74 @@ class Critique(BaseModel):
 
 # MARK: RETRIEVER
 async def retriever(state: ReflectionState):
-    """This function retrieves chunks over a query. It works via a MCP retrieval server that picks a retrieval tool. """
+    """This function retrieves chunks over a query, once per book in state["corpora"]."""
+    global bridged_tools_by_corpus, retrieval_agents_by_corpus
 
-    global bridged_tools, retrieval_agent
-
-    if bridged_tools is None:
-        bridged_tools = await mcp_tools_as_langchain_tools(http_client)
-    if retrieval_agent is None:
-        retrieval_agent = create_agent(
-            model=llm,
-            tools=bridged_tools,
-            middleware=[
-                ModelCallLimitMiddleware(run_limit=MAX_ITERATIONS),
-                ToolCallLimitMiddleware(run_limit=MAX_TOOL_CALLS, exit_behavior="end"),
-            ],
-            system_prompt=system_prompt,
-        )
-    if state["corpora"][CORPUS_ID]["narrowed_query"]:
-        argument = state["corpora"][CORPUS_ID]["narrowed_query"]
-    else:
-        argument = state["query"]
-    result = await retrieval_agent.ainvoke(
+    corpora_updates = {}
+    for corpus_id in state["corpora"]:
+        if corpus_id not in bridged_tools_by_corpus:
+            bridged_tools_by_corpus[corpus_id] = await mcp_tools_as_langchain_tools(http_client, corpus_id)
+        bridged_tools = bridged_tools_by_corpus[corpus_id]
+        if corpus_id not in retrieval_agents_by_corpus:
+            retrieval_agents_by_corpus[corpus_id] = create_agent(
+                model=llm,
+                tools=bridged_tools,
+                middleware=[
+                    ModelCallLimitMiddleware(run_limit=MAX_ITERATIONS),
+                    ToolCallLimitMiddleware(run_limit=MAX_TOOL_CALLS, exit_behavior="end"),
+                ],
+                system_prompt=system_prompt,
+            )
+        retrieval_agent = retrieval_agents_by_corpus[corpus_id]
+        if state["corpora"][corpus_id]["narrowed_query"]:
+            argument = state["corpora"][corpus_id]["narrowed_query"]
+        else:
+            argument = state["query"]
+        result = await retrieval_agent.ainvoke(
             {"messages": [HumanMessage(content=argument)]}
         )
-    chunks_list = []
-    tool_call_ids = set([])
-    lineage_dict = []
+        chunks_list = []
+        tool_call_ids = set([])
+        lineage_dict = []
 
-    for msg in result["messages"]:
-        if isinstance(msg, ToolMessage) and msg.status == "success":
-            chunks_list.extend(json.loads(msg.content))
-            tool_call_ids.add(msg.tool_call_id)
-    for msg in result["messages"]:
-        if isinstance(msg, AIMessage):
-            for tc in msg.tool_calls:
-                if tc["id"] in tool_call_ids:
-                    lineage_dict.append({"iteration": state["iteration"],
-                                        "tool": tc["name"],
-                                        "args": tc["args"],
-                                        "forced_retriever": False
-                                        })  
-    # forcing retriever
-    if not chunks_list:
-        async with http_client as client:
-                    r = await client.call_tool(FALLBACK_TOOL,
-                                       {"query":argument})
-                    chunks_list.extend(r.data)
-                    lineage_dict.append(
-                        {
-                            "iteration": state["iteration"],
-                            "tool": "call_parent_retriever",
-                            "args": {"query": argument},
-                            "forced_retriever": True
-                        }
-                    )
-    return {"corpora":
-                {CORPUS_ID: {
-                    "chunks": chunks_list,
-                    "lineage": state["corpora"][CORPUS_ID]["lineage"] + lineage_dict,
-                    "narrowed_query": state["corpora"][CORPUS_ID]["narrowed_query"]}}}
+        for msg in result["messages"]:
+            if isinstance(msg, ToolMessage) and msg.status == "success":
+                chunks_list.extend(json.loads(msg.content))
+                tool_call_ids.add(msg.tool_call_id)
+        for msg in result["messages"]:
+            if isinstance(msg, AIMessage):
+                for tc in msg.tool_calls:
+                    if tc["id"] in tool_call_ids:
+                        lineage_dict.append({"iteration": state["iteration"],
+                                             "tool": tc["name"],
+                                             "args": tc["args"],
+                                             "forced_retriever": False
+                                             })
+        # forcing retriever
+        if not chunks_list:
+            async with http_client as client:
+                r = await client.call_tool(FALLBACK_TOOL,
+                                           {"query": argument,
+                                            "corpus": corpus_id})
+                chunks_list.extend(r.data)
+                lineage_dict.append(
+                    {
+                        "iteration": state["iteration"],
+                        "tool": "call_parent_retriever",
+                        "args": {"query": argument},
+                        "forced_retriever": True
+                    }
+                )
+        corpora_updates[corpus_id] = {
+            "chunks": chunks_list,
+            "lineage": state["corpora"][corpus_id]["lineage"] + lineage_dict,
+            "narrowed_query": state["corpora"][corpus_id]["narrowed_query"],
+
+        }
+    return {"corpora": corpora_updates}
 
 
-#MARK: COMPOSER
+# MARK: COMPOSER
 def composer(state: ReflectionState):
     """
     This function composes an answer for: retrieved chunks from a query|narrowed_query, a Critique
@@ -134,7 +143,7 @@ def composer(state: ReflectionState):
         # context , query, feedback , previous answer
 
     # switch → composer (direct revise branch)
-    elif state["needs_revision"]:  #  old chunks
+    elif state["needs_revision"]:  # old chunks
         prompt = f"Given this context {context}, the query {state['query']} and the previous answer{state['answer']} critique to adress this feedback {state['feedback']}"
     # retriever → composer
     # no critique,
@@ -144,7 +153,8 @@ def composer(state: ReflectionState):
     answer = llm.invoke(prompt).content
     return {"answer": answer, "iteration": state["iteration"] + 1}
 
-#MARK: REFLECT
+
+# MARK: REFLECT
 def reflect(state: ReflectionState):
     """This function returns a Critique judgment over composer's answer. It works as an optimizer returning feedbacks and narrowed_query for another round of revision."""
     structured_llm = llm.with_structured_output(Critique)
@@ -155,10 +165,10 @@ def reflect(state: ReflectionState):
     return {
         "feedback": critique.feedback,
         "needs_revision": critique.needs_revision,
-        "corpora":    {CORPUS_ID: {
-                "chunks": state["corpora"][CORPUS_ID]["chunks"],
-                "lineage": state["corpora"][CORPUS_ID]["lineage"],
-                "narrowed_query": critique.narrowed_query}}
+        "corpora": {CORPUS_ID: {
+            "chunks": state["corpora"][CORPUS_ID]["chunks"],
+            "lineage": state["corpora"][CORPUS_ID]["lineage"],
+            "narrowed_query": critique.narrowed_query}}
     }
 
 
@@ -182,7 +192,6 @@ reflection_graph.add_edge("composer", "reflect")
 
 reflection_app = reflection_graph.compile()
 
-
 if __name__ == "__main__":
     # print(reflection_app.get_graph().draw_mermaid())
 
@@ -199,9 +208,12 @@ if __name__ == "__main__":
                 print(f"""\n        _Needs_revision: {update["needs_revision"]}""")
                 print(f"""\n            _Narrowed_query: {update["corpora"][CORPUS_ID]["narrowed_query"]}""")
                 for item in update["corpora"][CORPUS_ID]["lineage"]:
-                    print(f"""\n_It: {item["iteration"]}, Tool: {item["tool"]}, Query: {item["args"]["query"]}, Forced: {item["forced_retriever"]} """)
+                    print(
+                        f"""\n_It: {item["iteration"]}, Tool: {item["tool"]}, Query: {item["args"]["query"]}, Forced: {item["forced_retriever"]} """)
 
-                print("\n          _____________________________________________________________________________________________\n")
+                print(
+                    "\n          _____________________________________________________________________________________________\n")
+
 
     async def run():
         server_task = asyncio.create_task(
@@ -211,50 +223,50 @@ if __name__ == "__main__":
 
         # astream instead of ainvoke — see each node's output as it happens
         async for step in reflection_app.astream(
-            {
-                "query": "when and why Niccolò Machiavelli wrote The Lion",
-                "answer": "",
-                "needs_revision": False,
-                "feedback": "",
-                "iteration": 0,
-                "corpora": {CORPUS_ID: {
-                    "chunks": None,
-                    "lineage": [],
-                    "narrowed_query": None
-                } }
-            },
-            stream_mode="updates",
+                {
+                    "query": "when and why Niccolò Machiavelli wrote The Lion",
+                    "answer": "",
+                    "needs_revision": False,
+                    "feedback": "",
+                    "iteration": 0,
+                    "corpora": {CORPUS_ID: {
+                        "chunks": None,
+                        "lineage": [],
+                        "narrowed_query": None
+                    }}
+                },
+                stream_mode="updates",
         ):
             show(step)
-            
+
         server_task.cancel()
 
 
-
-#MARK: TESTS
+    # MARK: TESTS
     async def test_retriever():
         server_task = asyncio.create_task(
-                    mcp.run_http_async(port=PORT, show_banner=False, log_level="critical")
-                )
+            mcp.run_http_async(port=PORT, show_banner=False, log_level="critical")
+        )
         await asyncio.sleep(1.0)
         try:
             state = {
-                "query": "when and why Niccolò Machiavelli wrote The Lion",
+                "query": "What the book says about 'life being represented instead of living'?",
                 "answer": "",
                 "needs_revision": False,
                 "feedback": "",
                 "iteration": 0,
-                "corpora": {CORPUS_ID: {
-                    "chunks": None,
-                    "lineage": [],
-                    "narrowed_query": None
-                } }
+                "corpora": {
+                    "A": {"chunks": None, "lineage": [], "narrowed_query": None},
+                    "B": {"chunks": None, "lineage": [], "narrowed_query": None},
+                }
+
             }
-            return await retriever(state)
+
+            result = await retriever2(state)
+            print(result)
+            return result
         finally:
             server_task.cancel()
-
-
 
 
     async def test_accumulation():
@@ -285,7 +297,6 @@ if __name__ == "__main__":
             server_task.cancel()
 
 
-
     async def test_retriever_2():
         server_task = asyncio.create_task(mcp.run_http_async(port=PORT, show_banner=False, log_level="critical"))
 
@@ -293,14 +304,13 @@ if __name__ == "__main__":
 
         async with http_client as client:
             r = await client.call_tool("call_parent_retriever",
-                               {"query": "when and why Niccolò Machiavelli wrote The Lion"})
-        print(len(r.data)); print(r.data[0][:200])
+                                       {"query": "when and why Niccolò Machiavelli wrote The Lion"})
+        print(len(r.data));
+        print(r.data[0][:200])
 
 
-#MARK: CALLERS
-    asyncio.run(run())
-    # asyncio.run(test_retriever())
+    # MARK: CALLERS
+    # asyncio.run(run())
+    asyncio.run(test_retriever())
     # asyncio.run(test_accumulation())
     # asyncio.run(test_retriever_2())
-
-
