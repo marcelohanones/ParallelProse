@@ -25,8 +25,6 @@ FALLBACK_TOOL = "call_parent_retriever"
 CORPUS_ID = "B"
 
 system_prompt = " You must call at least one retrieval tool before finishing. You must not answer from your own knowledge, passages from the corpus are the only source. If the query looks impossible or wrong, you must still do the search. Use the query as given, only allow minor changes in the wording if it is to make it clearer. If a retrieval tool returns no results or an error, try a different retrieval tool."
-# bridged_tools = None
-# retrieval_agent = None
 
 bridged_tools_by_corpus = {}
 retrieval_agents_by_corpus = {}
@@ -261,8 +259,7 @@ if __name__ == "__main__":
                 }
 
             }
-
-            result = await retriever2(state)
+            result = await retriever(state)
             print(result)
             return result
         finally:

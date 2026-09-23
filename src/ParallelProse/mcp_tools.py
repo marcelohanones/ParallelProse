@@ -11,15 +11,14 @@ from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 import copy
 
-from ParallelProse.ingest import PDF_PATH, EPUB_PATH
 from ParallelProse.retrieve import Retrieval
+from ParallelProse.catalog import CATALOG
 
 mcp = FastMCP(name="RetrievalServer", instructions="Provide Retrieval Methods")
-collection_nameA = "augustine_confessions"
-collection_nameB = "debord_spectacle"
+
 REGISTRY = {
-    "A": Retrieval(collection_name=collection_nameA, source_path=EPUB_PATH),
-    "B": Retrieval(collection_name=collection_nameB, source_path=PDF_PATH)
+    "A": Retrieval(collection_name=CATALOG["A"].collection_name, source_path=CATALOG["A"].path),
+    "B": Retrieval(collection_name=CATALOG["B"].collection_name, source_path=CATALOG["B"].path)
 }
 
 for v in REGISTRY.values():
@@ -119,8 +118,7 @@ async def main():
 
 # MARK: Main
 if __name__ == "__main__":
-    asyncio.run(main())
-
+    # asyncio.run(main())
 
     async def test_retriever():
         server_task = asyncio.create_task(mcp.run_http_async(port=PORT, show_banner=False, log_level="critical"))
@@ -151,4 +149,5 @@ if __name__ == "__main__":
             })
             print(f""">>> Ensemble_retriever: {en.data[0][:200]}""")
 
-    # asyncio.run(test_retriever())
+
+    asyncio.run(test_retriever())

@@ -12,10 +12,6 @@ from pypdf import PdfReader
 
 warnings.filterwarnings("ignore")
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PDF_PATH = REPO_ROOT / "data" / "The_Society_of_the_Spectacle_(Annotated Edition)-Guy_Debord.pdf"
-EPUB_PATH = REPO_ROOT / "data" / "The_Confessions_Of_Saint_Augustine-Saint_Augustine_Pusey_Edward_Bouverie-2017-Duke Classics.epub"
-
 
 # MARK: ENTRY POINT
 def load_corpus(path: str) -> list[Document]:
@@ -92,4 +88,6 @@ def _flatten_toc(entries) -> dict[str, str]:
 
 
 if __name__ == "__main__":
-    print(len(load_corpus(str(PDF_PATH))[0].page_content))
+    from ParallelProse.catalog import CATALOG
+
+    print(len(load_corpus(str(CATALOG["B"].path))[0].page_content))

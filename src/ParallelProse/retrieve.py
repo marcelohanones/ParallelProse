@@ -22,14 +22,13 @@ from langchain_core.documents import Document
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_text_splitters import CharacterTextSplitter
 
-from ParallelProse.ingest import PDF_PATH, REPO_ROOT, load_corpus
+from ParallelProse.ingest import load_corpus
+from ParallelProse.catalog import CHROMA_PERSIST_DIR, DATA_DIR
 
 warnings.filterwarnings("ignore")
 
-CHROMA_PERSIST_DIR = REPO_ROOT / "data" / "chroma_demo_c1_project"
 
-
-# // MARK: Retrieval
+# MARK: Retrieval
 @dataclass
 class SplitterConfig:
     chunk_size: int
@@ -77,8 +76,8 @@ class Retrieval:
         )
 
     def make_docstore(self):
-        name = self.collection_name + "_project"
-        return create_kv_docstore(LocalFileStore(REPO_ROOT / "data" / name))
+        name = self.collection_name + "_docstore"
+        return create_kv_docstore(LocalFileStore(DATA_DIR / name))
 
     def make_parent_retriever(self):
         return ParentDocumentRetriever(
@@ -174,7 +173,9 @@ class Retrieval:
 
 
 if __name__ == "__main__":
-    retrieval_obj = Retrieval(collection_name="class_testing", source_path=PDF_PATH)
+    from ParallelProse.catalog import CATALOG
+
+    retrieval_obj = Retrieval(collection_name="class_testing", source_path=CATALOG["B"].path)
     retrieval_obj.add_parent_child_docs()
     # description = "A chunk of text from Machiavelli's 'The Prince'"
     # print(retrieval_obj.make_search_self_query("em quais capitulos o autor fala sobre fortuna ?", description))
