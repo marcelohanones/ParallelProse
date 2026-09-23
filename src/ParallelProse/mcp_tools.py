@@ -109,16 +109,16 @@ async def main():
 
     agent = create_agent(model=ChatOpenAI(model="gpt-4o-mini"), tools=bridged_tools)
     result = await agent.ainvoke(
-        {"messages": [HumanMessage(content="In what year was Society of the Spectacle written ?")]}
+        {"messages": [HumanMessage(content="What the book says about 'life being represented instead of living'?")]}
     )
     print(result["messages"][-1].content)
-
     server_task.cancel()
 
 
 # MARK: Main
 if __name__ == "__main__":
-    # asyncio.run(main())
+    asyncio.run(main())
+
 
     async def test_retriever():
         server_task = asyncio.create_task(mcp.run_http_async(port=PORT, show_banner=False, log_level="critical"))
@@ -149,5 +149,4 @@ if __name__ == "__main__":
             })
             print(f""">>> Ensemble_retriever: {en.data[0][:200]}""")
 
-
-    asyncio.run(test_retriever())
+    # asyncio.run(test_retriever())

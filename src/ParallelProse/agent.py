@@ -1,6 +1,5 @@
 import asyncio
 import warnings
-from operator import contains
 from typing import TypedDict
 
 from dotenv import load_dotenv
@@ -12,6 +11,7 @@ from pydantic import BaseModel, Field
 from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
 import json
 
+from ParallelProse.catalog import CATALOG
 from ParallelProse.mcp_tools import PORT, http_client, mcp, mcp_tools_as_langchain_tools
 
 warnings.filterwarnings("ignore")
@@ -22,7 +22,7 @@ llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
 MAX_ITERATIONS = 5
 MAX_TOOL_CALLS = 4
 FALLBACK_TOOL = "call_parent_retriever"
-CORPUS_ID = "B"
+CORPUS_ID = "A"
 
 system_prompt = " You must call at least one retrieval tool before finishing. You must not answer from your own knowledge, passages from the corpus are the only source. If the query looks impossible or wrong, you must still do the search. Use the query as given, only allow minor changes in the wording if it is to make it clearer. If a retrieval tool returns no results or an error, try a different retrieval tool."
 
@@ -125,14 +125,28 @@ async def retriever(state: ReflectionState):
     return {"corpora": corpora_updates}
 
 
+def format_context(corpora: dict[str, CorpusState]) -> str:
+    """One labeled block per book: a header naming the book, then that book's chunks.
+    Returns a single string for the composer prompt."""
+    blocks = []
+    for corpus_id, slot in corpora.items():
+        header = f"""{CATALOG[corpus_id].book_title} - {CATALOG[corpus_id].author}\n"""
+        if not slot["chunks"]:
+            chunks_to_str = "no passages retrieved"
+        else:
+            chunks_to_str = "\n\n".join(slot["chunks"])
+        blocks.append(header + chunks_to_str)
+    divider = "\n====================================================\n"
+    result = divider.join(blocks)
+    return result
+
+
 # MARK: COMPOSER
 def composer(state: ReflectionState):
     """
     This function composes an answer for: retrieved chunks from a query|narrowed_query, a Critique
     """
-    # context = ""
-    docs = state["corpora"][CORPUS_ID]["chunks"]
-    context = docs
+    context = format_context(state["corpora"])
     # narrowed_retriever → composer
     # critique narrowed_query + chunks
     if state["corpora"][CORPUS_ID]["narrowed_query"] and state["needs_revision"]:  # new chunks
@@ -142,7 +156,7 @@ def composer(state: ReflectionState):
 
     # switch → composer (direct revise branch)
     elif state["needs_revision"]:  # old chunks
-        prompt = f"Given this context {context}, the query {state['query']} and the previous answer{state['answer']} critique to adress this feedback {state['feedback']}"
+        prompt = f"Given this context {context}, the query {state['query']} and the previous answer{state['answer']} critique to address this feedback {state['feedback']}"
     # retriever → composer
     # no critique,
     else:
@@ -222,7 +236,7 @@ if __name__ == "__main__":
         # astream instead of ainvoke — see each node's output as it happens
         async for step in reflection_app.astream(
                 {
-                    "query": "when and why Niccolò Machiavelli wrote The Lion",
+                    "query": "What the book says about 'life being represented instead of living'?",
                     "answer": "",
                     "needs_revision": False,
                     "feedback": "",
@@ -260,7 +274,7 @@ if __name__ == "__main__":
 
             }
             result = await retriever(state)
-            print(result)
+            # print(result)
             return result
         finally:
             server_task.cancel()
