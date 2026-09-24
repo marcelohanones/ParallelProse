@@ -136,7 +136,7 @@ def format_context(corpora: dict[str, CorpusState]) -> str:
         else:
             chunks_to_str = "\n\n".join(slot["chunks"])
         blocks.append(header + chunks_to_str)
-    divider = "\n====================================================\n"
+    divider = "\n\n\n====================================================\n\n\n"
     result = divider.join(blocks)
     return result
 
@@ -236,16 +236,16 @@ if __name__ == "__main__":
         # astream instead of ainvoke — see each node's output as it happens
         async for step in reflection_app.astream(
                 {
-                    "query": "What the book says about 'life being represented instead of living'?",
+                    "query": "How is time experienced by people, and what shapes that experience?",
                     "answer": "",
                     "needs_revision": False,
                     "feedback": "",
                     "iteration": 0,
-                    "corpora": {CORPUS_ID: {
-                        "chunks": None,
-                        "lineage": [],
-                        "narrowed_query": None
-                    }}
+                    "corpora": {
+                        "A": {"chunks": None, "lineage": [], "narrowed_query": None},
+                        "B": {"chunks": None, "lineage": [], "narrowed_query": None},
+                    }
+
                 },
                 stream_mode="updates",
         ):
@@ -321,7 +321,7 @@ if __name__ == "__main__":
 
 
     # MARK: CALLERS
-    # asyncio.run(run())
-    asyncio.run(test_retriever())
+    asyncio.run(run())
+    # asyncio.run(test_retriever())
     # asyncio.run(test_accumulation())
     # asyncio.run(test_retriever_2())
