@@ -1,6 +1,6 @@
 import asyncio
 import warnings
-from typing import TypedDict
+from typing import TypedDict, Literal
 
 from dotenv import load_dotenv
 from langchain.agents import create_agent
@@ -34,6 +34,8 @@ class CorpusState(TypedDict):
     chunks: list[str]
     lineage: list[dict]
     narrowed_query: str | None
+    label: Literal["ok", "miss", "silent"] | None
+    reason: str | None
 
 
 class ReflectionState(TypedDict):
@@ -45,25 +47,37 @@ class ReflectionState(TypedDict):
     corpora: dict[str, CorpusState]  # {"A": {...}} for now
 
 
+class CorpusCritique(BaseModel):
+    """One book's verdict: is the evidence there, and if not, why."""
+    corpus_id: str = Field(description="the id of the book this verdict is about, exactly as given in the context")
+    label: Literal["ok", "miss", "silent"] = Field(
+        description="'ok' is when chunks support a real answer for this book. 'miss' is when the book probably addresses it, but retrieval didn't surface it (wrong words count as a miss). 'silent' is when the chunks show the book doesn't address it. Related material in other words points to a miss. Unrelated material points to silence. A narrowed retry that still comes back empty is the best evidence of silence. So, on the first look the default leans toward miss, and silent needs the evidence to stack up.")
+    reason: str = Field(
+        description="This points the fact(s) that backs-up the choosing of a label. This is the factual proof of what triggers, justifies one label or another. It points that a chunk fully covers or not a query, if not, that a narrowed_query has or hasn't already been tried, successfully or not.")
+    narrowed_query: str | None = Field(
+        default=None,
+        description="Only used when label is 'miss'. It is a narrowed query that would resolve a specific factual doubt, if any. Leave null otherwise.",
+    )
+
+
 class Critique(BaseModel):
+    """The whole verdict: one entry per book, plus the draft-level signal."""
     needs_revision: bool = Field(
         description="True if the answer has a real gap or error worth fixing"
     )
     feedback: str = Field(description="What's wrong and what to fix, or why it's fine")
-    narrowed_query: str | None = Field(
-        default=None,
-        description="A narrowed query that would resolve a specific factual doubt, if any. Leave null otherwise.",
-    )
+    corpora_critique: list[CorpusCritique] = Field(
+        description="Is exactly one entry for every book in the context, none skipped")
 
 
 # MARK: RETRIEVER
 async def retriever(state: ReflectionState):
     """This function retrieves chunks over a query, once per book in state["corpora"]."""
-    global bridged_tools_by_corpus, retrieval_agents_by_corpus
-
+    # * 1 - This section builds server tools and agent creation, per-book.
+    global bridged_tools_by_corpus, retrieval_agents_by_corpus  # caches mcp's call and create_agent call.
     corpora_updates = {}
     for corpus_id in state["corpora"]:
-        if corpus_id not in bridged_tools_by_corpus:
+        if corpus_id not in bridged_tools_by_corpus:  # have I already built the tools for this book ? if yes, cache in bridged_tools_by_corpus.
             bridged_tools_by_corpus[corpus_id] = await mcp_tools_as_langchain_tools(http_client, corpus_id)
         bridged_tools = bridged_tools_by_corpus[corpus_id]
         if corpus_id not in retrieval_agents_by_corpus:
@@ -77,6 +91,7 @@ async def retriever(state: ReflectionState):
                 system_prompt=system_prompt,
             )
         retrieval_agent = retrieval_agents_by_corpus[corpus_id]
+        # * 2 - This section sets the argument for retrieval
         if state["corpora"][corpus_id]["narrowed_query"]:
             argument = state["corpora"][corpus_id]["narrowed_query"]
         else:
@@ -84,6 +99,7 @@ async def retriever(state: ReflectionState):
         result = await retrieval_agent.ainvoke(
             {"messages": [HumanMessage(content=argument)]}
         )
+        # * 3 -  This section sets accumulators for corpora
         chunks_list = []
         tool_call_ids = set([])
         lineage_dict = []
@@ -120,7 +136,8 @@ async def retriever(state: ReflectionState):
             "chunks": chunks_list,
             "lineage": state["corpora"][corpus_id]["lineage"] + lineage_dict,
             "narrowed_query": state["corpora"][corpus_id]["narrowed_query"],
-
+            "label": state["corpora"][corpus_id]["label"],
+            "reason": state["corpora"][corpus_id]["reason"]
         }
     return {"corpora": corpora_updates}
 
@@ -146,19 +163,16 @@ def composer(state: ReflectionState):
     """
     This function composes an answer for: retrieved chunks from a query|narrowed_query, a Critique
     """
-    context = format_context(state["corpora"])
-    # narrowed_retriever → composer
-    # critique narrowed_query + chunks
-    if state["corpora"][CORPUS_ID]["narrowed_query"] and state["needs_revision"]:  # new chunks
+    context = format_context(state["corpora"])  # organize chunks per-book
+
+    # 1 - This branch deals with new chunks right from retriever due to previous round's narrowed_query and needs_revision.
+    if state["corpora"][CORPUS_ID]["narrowed_query"] and state["needs_revision"]:
         prompt = f"Given this context {context}, the query {state['corpora'][CORPUS_ID]['narrowed_query']},  and the previous answer{state['answer']} , critique to address this feedback {state['feedback']}"
 
-        # context , query, feedback , previous answer
-
-    # switch → composer (direct revise branch)
-    elif state["needs_revision"]:  # old chunks
+    # 2 - This branch deals with old chunks when previous round asked for revision without a norrowed_query.
+    elif state["needs_revision"]:
         prompt = f"Given this context {context}, the query {state['query']} and the previous answer{state['answer']} critique to address this feedback {state['feedback']}"
-    # retriever → composer
-    # no critique,
+    # 3 - This branch deals with the round, right after retriever.
     else:
         prompt = f"Given this context {context}, write a short (3-4 sentence) factual note on: {state['query']}"
 
@@ -166,9 +180,28 @@ def composer(state: ReflectionState):
     return {"answer": answer, "iteration": state["iteration"] + 1}
 
 
+def format_attempts(corpora: dict[str, CorpusState]) -> str:
+    """Returns one block per book: the queries already tried, one line per attempt.
+    Returns a string for reflect's prompt."""
+    blocks = []
+    for corpus_id, slot in corpora.items():
+        header = f"{CATALOG[corpus_id].book_title} - {CATALOG[corpus_id].author}\n"
+        if not slot["lineage"]:
+            body = "no attempts so far"
+        else:
+            body = "\n".join(
+                f"Iteration: {a['iteration']}, Tool: {a['tool']}, "
+                f"Query: {a['args']['query']}, Forced: {a['forced_retriever']}"
+                for a in slot["lineage"]
+            )
+        blocks.append(header + body)
+    return "\n\n".join(blocks)
+
+
 # MARK: REFLECT
 def reflect(state: ReflectionState):
-    """This function returns a Critique judgment over composer's answer. It works as an optimizer returning feedbacks and narrowed_query for another round of revision."""
+    """Returns a Critique judgment over composer's answer. It works as an optimizer returning feedbacks and narrowed_query for another round of revision, if needed."""
+    format_attempts(state["corpora"])
     structured_llm = llm.with_structured_output(Critique)
     critique = structured_llm.invoke(
         f"Critique this draft for factual accuracy and completeness.\n\n"
@@ -205,7 +238,8 @@ reflection_graph.add_edge("composer", "reflect")
 reflection_app = reflection_graph.compile()
 
 if __name__ == "__main__":
-    # print(reflection_app.get_graph().draw_mermaid())
+    print(reflection_app.get_graph().draw_mermaid())
+
 
     def show(step: dict, width: int = 100):
         for node, update in step.items():
@@ -242,10 +276,9 @@ if __name__ == "__main__":
                     "feedback": "",
                     "iteration": 0,
                     "corpora": {
-                        "A": {"chunks": None, "lineage": [], "narrowed_query": None},
-                        "B": {"chunks": None, "lineage": [], "narrowed_query": None},
+                        "A": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None},
+                        "B": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None},
                     }
-
                 },
                 stream_mode="updates",
         ):
@@ -268,8 +301,8 @@ if __name__ == "__main__":
                 "feedback": "",
                 "iteration": 0,
                 "corpora": {
-                    "A": {"chunks": None, "lineage": [], "narrowed_query": None},
-                    "B": {"chunks": None, "lineage": [], "narrowed_query": None},
+                    "A": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None},
+                    "B": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None},
                 }
 
             }
