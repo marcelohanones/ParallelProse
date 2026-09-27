@@ -33,9 +33,9 @@ retrieval_agents_by_corpus = {}
 class CorpusState(TypedDict):
     chunks: list[str]
     lineage: list[dict]
-    narrowed_query: str | None
     label: Literal["ok", "miss", "silent"] | None
     reason: str | None
+    narrowed_query: str | None
 
 
 class ReflectionState(TypedDict):
@@ -67,7 +67,7 @@ class Critique(BaseModel):
     )
     feedback: str = Field(description="What's wrong and what to fix, or why it's fine")
     corpora_critique: list[CorpusCritique] = Field(
-        description="Is exactly one entry for every book in the context, none skipped")
+        description="Is exactly one entry for each book in the context, none skipped")
 
 
 # MARK: RETRIEVER
@@ -185,7 +185,7 @@ def format_attempts(corpora: dict[str, CorpusState]) -> str:
     Returns a string for reflect's prompt."""
     blocks = []
     for corpus_id, slot in corpora.items():
-        header = f"{CATALOG[corpus_id].book_title} - {CATALOG[corpus_id].author}\n"
+        header = f"corpus_id: {corpus_id} -> Book_title: {CATALOG[corpus_id].book_title} - Author: {CATALOG[corpus_id].author}\n"
         if not slot["lineage"]:
             body = "no attempts so far"
         else:
@@ -201,19 +201,47 @@ def format_attempts(corpora: dict[str, CorpusState]) -> str:
 # MARK: REFLECT
 def reflect(state: ReflectionState):
     """Returns a Critique judgment over composer's answer. It works as an optimizer returning feedbacks and narrowed_query for another round of revision, if needed."""
-    format_attempts(state["corpora"])
+    context = format_attempts(state["corpora"])
+    verdicts = {}
     structured_llm = llm.with_structured_output(Critique)
     critique = structured_llm.invoke(
-        f"Critique this draft for factual accuracy and completeness.\n\n"
-        f"Query: {state['query']}\n\nAnswer:\n{state['answer']}"
+        f"Given this Context: {context} with both books A and B, critique Answer for factual accuracy and completeness.\n\n"
+        f"Query: {state['query']}\n\nAnswer:\n{state['answer']}. Return your answer formatted under two attributes: needs_revision and feedback."
+        f"After that do a per-book assessment using the attributes from corpus_critique: corpus_id, label, reason, narrowed_query. corpus_id must be A or B, "
     )
+    for slot in critique.corpora_critique:
+        if slot.corpus_id == "A":
+            verdicts["A"] = {"corpus_id": slot.corpus_id,
+                             "label": slot.label,
+                             "reason": slot.reason,
+                             "narrowed_query": slot.narrowed_query
+                             }
+        else:
+            verdicts["B"] = {"corpus_id": slot.corpus_id,
+                             "label": slot.label,
+                             "reason": slot.reason,
+                             "narrowed_query": slot.narrowed_query
+                             }
+
     return {
         "feedback": critique.feedback,
         "needs_revision": critique.needs_revision,
-        "corpora": {CORPUS_ID: {
-            "chunks": state["corpora"][CORPUS_ID]["chunks"],
-            "lineage": state["corpora"][CORPUS_ID]["lineage"],
-            "narrowed_query": critique.narrowed_query}}
+        "corpora":
+            {"A": {
+                "chunks": state["corpora"]["A"]["chunks"],
+                "lineage": state["corpora"]["A"]["lineage"],
+                "label": verdicts["A"]["label"],
+                "reason": verdicts["A"]["reason"],
+                "narrowed_query": verdicts["A"]["narrowed_query"]
+            },
+                "B": {
+                    "chunks": state["corpora"]["B"]["chunks"],
+                    "lineage": state["corpora"]["B"]["lineage"],
+                    "label": verdicts["B"]["label"],
+                    "reason": verdicts["B"]["reason"],
+                    "narrowed_query": verdicts["B"]["narrowed_query"]
+                }
+            }
     }
 
 
