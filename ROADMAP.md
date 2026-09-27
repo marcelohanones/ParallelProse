@@ -7,8 +7,9 @@
 - **v1 (frozen, 2026-09-16)** — single corpus, two separate agents: a fixed reflect-loop graph and a tool-flexible MCP
   demo agent. No comparison capability, no quality loop on the flexible agent.
 - **v2 (in progress)** — merges the two agents into one graph and generalizes it to compare two corpora ("Parallel
-  Prose": what do two books say about an issue). Items 1 (the merge, 2026-09-19) and 2 (two corpora, 2026-09-24) are
-  done; items 4–6 are designed, not yet built (item 3 was dropped, see "Considered and dropped").
+  Prose": what do two books say about an issue). Items 1 (the merge, 2026-09-19), 2 (two corpora, 2026-09-24), and 4
+  (reflect as diagnostic router, 2026-09-27) are done; items 5–6 are designed, not yet built (item 3 was dropped, see
+  "Considered and dropped").
 - **v3 (planned)** — starts once v2 is complete, with an evaluation harness and demo packaging; the other ideas stay in
   the backlog, deliberately deferred, not forgotten.
 - **RAG-Tetris** — a separate future project (comparing code across versions), out of scope here.
@@ -62,6 +63,29 @@ as an ongoing tax. **Synergy:** every later item here is naturally per-corpus on
 exist would mean reworking all of them.
 
 ### 4. `reflect` becomes a diagnostic router
+
+**Status: done, 2026-09-27.** Built as designed (see `project_item4_reflect_router_decisions.md`), plus what building
+and two real runs turned out to need:
+
+- `Critique` now nests a `CorpusCritique` per book (`corpus_id: Literal["A", "B"]`, `label: ok|miss|silent`, `reason`,
+  `narrowed_query`) instead of one flat verdict — one LLM call judges both books.
+- `reflect`'s prompt gives the model an explicit id→title mapping (built from `CATALOG`, since `format_context`'s
+  headers show titles, never "A"/"B"), the retrieved chunks (`format_context`), and the query log so far
+  (`format_attempts`) — so a label is checked against that book's own text, not asserted from the draft alone.
+- `corpus_id` is `Literal["A", "B"]`, not a plain `str`: a malformed value now fails at the schema boundary instead of
+  silently misfiling into the wrong book's slot.
+- `narrowed_query` is code-enforced to `None` whenever `label != "miss"`, not left to the field description alone.
+- The return carries every book's updated slot — fixes the earlier bug where book B's slot was dropped on every
+  `reflect` call.
+- `show()` prints each book's `label`/`reason`/`narrowed_query` per round, not just one hardcoded book.
+- Two real runs on both books (gpt-4o-mini) validated the labels track the actual chunks — reasons cited concrete
+  content, not filler. Also surfaced two things for the backlog below: `reflect`'s label on *identical* chunks isn't
+  stable call-to-call (one run flipped a book between `ok` and `miss` across rounds with no new evidence), and once
+  every book is `ok`, nothing stops `needs_revision` from staying `True` and re-running `composer` on unchanged text
+  until `MAX_ITERATIONS`.
+- Open, deliberately left for item 5: whether a retry fires *at all* is still gated on book A's `narrowed_query` alone
+  (`route_after_reflection`/`composer` still hardcode `CORPUS_ID`) — a book B miss only gets acted on if A also needed
+  a retry that round, since `retriever` retries every book whenever it runs at all.
 
 **What:** `reflect` stops being a binary pass/fail gate and judges each corpus separately, telling *why* a corpus's
 coverage is thin: a retrieval miss (a narrowed-query retry can fix it) or genuine silence (the source doesn't address

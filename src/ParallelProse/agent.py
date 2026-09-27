@@ -49,11 +49,11 @@ class ReflectionState(TypedDict):
 
 class CorpusCritique(BaseModel):
     """One book's verdict: is the evidence there, and if not, why."""
-    corpus_id: str = Field(description="the id of the book this verdict is about, exactly as given in the context")
+    corpus_id: Literal["A", "B"] = Field(description="the id of the book this verdict is about, exactly as given in the context")
     label: Literal["ok", "miss", "silent"] = Field(
         description="'ok' is when chunks support a real answer for this book. 'miss' is when the book probably addresses it, but retrieval didn't surface it (wrong words count as a miss). 'silent' is when the chunks show the book doesn't address it. Related material in other words points to a miss. Unrelated material points to silence. A narrowed retry that still comes back empty is the best evidence of silence. So, on the first look the default leans toward miss, and silent needs the evidence to stack up.")
     reason: str = Field(
-        description="This points the fact(s) that backs-up the choosing of a label. This is the factual proof of what triggers, justifies one label or another. It points that a chunk fully covers or not a query, if not, that a narrowed_query has or hasn't already been tried, successfully or not.")
+        description="This points the fact(s) that backs-up the choosing of a label. This is the factual proof of what triggers, justifies one label or another. It points that a chunk fully covers a query, or not , if not, that a narrowed_query has or hasn't already been tried, successfully or not.")
     narrowed_query: str | None = Field(
         default=None,
         description="Only used when label is 'miss'. It is a narrowed query that would resolve a specific factual doubt, if any. Leave null otherwise.",
@@ -147,7 +147,7 @@ def format_context(corpora: dict[str, CorpusState]) -> str:
     Returns a single string for the composer prompt."""
     blocks = []
     for corpus_id, slot in corpora.items():
-        header = f"""{CATALOG[corpus_id].book_title} - {CATALOG[corpus_id].author}\n"""
+        header = f"corpus_id: {corpus_id} = Book_title: {CATALOG[corpus_id].book_title} - Author: {CATALOG[corpus_id].author}\n"
         if not slot["chunks"]:
             chunks_to_str = "no passages retrieved"
         else:
@@ -169,7 +169,7 @@ def composer(state: ReflectionState):
     if state["corpora"][CORPUS_ID]["narrowed_query"] and state["needs_revision"]:
         prompt = f"Given this context {context}, the query {state['corpora'][CORPUS_ID]['narrowed_query']},  and the previous answer{state['answer']} , critique to address this feedback {state['feedback']}"
 
-    # 2 - This branch deals with old chunks when previous round asked for revision without a norrowed_query.
+    # 2 - This branch deals with old chunks when previous round asked for revision without a narrowed_query.
     elif state["needs_revision"]:
         prompt = f"Given this context {context}, the query {state['query']} and the previous answer{state['answer']} critique to address this feedback {state['feedback']}"
     # 3 - This branch deals with the round, right after retriever.
@@ -181,11 +181,11 @@ def composer(state: ReflectionState):
 
 
 def format_attempts(corpora: dict[str, CorpusState]) -> str:
-    """Returns one block per book: the queries already tried, one line per attempt.
-    Returns a string for reflect's prompt."""
+    """Returns a string for reflect's prompt formatted as one block per book: the queries already tried, one line per attempt.
+    """
     blocks = []
     for corpus_id, slot in corpora.items():
-        header = f"corpus_id: {corpus_id} -> Book_title: {CATALOG[corpus_id].book_title} - Author: {CATALOG[corpus_id].author}\n"
+        header = f"corpus_id: {corpus_id} = Book_title: {CATALOG[corpus_id].book_title} - Author: {CATALOG[corpus_id].author}\n"
         if not slot["lineage"]:
             body = "no attempts so far"
         else:
@@ -200,23 +200,41 @@ def format_attempts(corpora: dict[str, CorpusState]) -> str:
 
 # MARK: REFLECT
 def reflect(state: ReflectionState):
-    """Returns a Critique judgment over composer's answer. It works as an optimizer returning feedbacks and narrowed_query for another round of revision, if needed."""
-    context = format_attempts(state["corpora"])
-    verdicts = {}
+    """This is an "optimizer" function that returns an evaluation to ground upstream refinement, if needed. It works by applying a Critique judgment over composer's answer."""
+
+    # 1 - This section sets the structural information to feed the llm.
+    book_map = "\n".join(
+        f"{corpus_id} = {CATALOG[corpus_id].book_title}" for corpus_id in state["corpora"])
+    attempts = format_attempts(state["corpora"])
+    chunks = format_context(state["corpora"])
+
+    # 2 - This section gets a Critique by calling the llm.
     structured_llm = llm.with_structured_output(Critique)
     critique = structured_llm.invoke(
-        f"Given this Context: {context} with both books A and B, critique Answer for factual accuracy and completeness.\n\n"
-        f"Query: {state['query']}\n\nAnswer:\n{state['answer']}. Return your answer formatted under two attributes: needs_revision and feedback."
-        f"After that do a per-book assessment using the attributes from corpus_critique: corpus_id, label, reason, narrowed_query. corpus_id must be A or B, "
+        f"Books:\n{book_map}\n\n"
+        f"Query: {state['query']}\n\n"
+        f"Answer:\n{state['answer']}\n\n"
+        f"Retrieved passages per book:\n{chunks}\n\n"
+        f"Queries already tried per book:\n{attempts}\n\n"
+        "Critique the answer for factual accuracy and completeness against the retrieved passages.\n"
+        "Return needs_revision and feedback for the answer as a whole.\n"
+        "Then, for each book listed above, add one entry to corpora_critique: corpus_id must be "
+        "exactly A or B as given above, plus label, reason, and narrowed_query."
     )
+    # 3 - This section saves the Critique in a per-book structure.
+    verdicts = {}
     for slot in critique.corpora_critique:
         if slot.corpus_id == "A":
+            if slot.label != "miss":
+                slot.narrowed_query = None
             verdicts["A"] = {"corpus_id": slot.corpus_id,
                              "label": slot.label,
                              "reason": slot.reason,
                              "narrowed_query": slot.narrowed_query
                              }
         else:
+            if slot.label != "miss":
+                slot.narrowed_query = None
             verdicts["B"] = {"corpus_id": slot.corpus_id,
                              "label": slot.label,
                              "reason": slot.reason,
@@ -266,27 +284,29 @@ reflection_graph.add_edge("composer", "reflect")
 reflection_app = reflection_graph.compile()
 
 if __name__ == "__main__":
-    print(reflection_app.get_graph().draw_mermaid())
-
+    # print(reflection_app.get_graph().draw_mermaid())
 
     def show(step: dict, width: int = 100):
         for node, update in step.items():
             print(f"\n________{node.upper()} >>>")
             if node == "retriever":
-                print(f"""_Chunks: {len(update["corpora"][CORPUS_ID]["chunks"])} items""")
+                for corpus_id in update["corpora"]:
+                    print(f"""_Chunks: {corpus_id} -  {len(update["corpora"][corpus_id]["chunks"])} items""")
             if node == "composer":
-                print(f"""  _Answer: {update["answer"][:width]}""")
+                print(f"""_Answer: {update["answer"][:width]}""")
             if node == "reflect":
-                print(f"""_Chunks: {len(update["corpora"][CORPUS_ID]["chunks"])} items""")
-                print(f"""      _Feedback:  {update["feedback"][:width]}""")
-                print(f"""\n        _Needs_revision: {update["needs_revision"]}""")
-                print(f"""\n            _Narrowed_query: {update["corpora"][CORPUS_ID]["narrowed_query"]}""")
-                for item in update["corpora"][CORPUS_ID]["lineage"]:
-                    print(
-                        f"""\n_It: {item["iteration"]}, Tool: {item["tool"]}, Query: {item["args"]["query"]}, Forced: {item["forced_retriever"]} """)
-
+                print(f"""_Feedback:  {update["feedback"][:width]}""")
+                print(f"""_Needs_revision: {update["needs_revision"]}\n""")
+                for corpus_id in update["corpora"]:
+                    print(f"""_Chunks: {corpus_id} - {len(update["corpora"][corpus_id]["chunks"])} items""")
+                    print(f"""  _Label: {update["corpora"][corpus_id]["label"]} """)
+                    print(f"""    _Reason: {update["corpora"][corpus_id]["reason"]} """)
+                    print(f"""      _Narrowed_query: {update["corpora"][corpus_id]["narrowed_query"]}\n""")
+                    for item in update["corpora"][corpus_id]["lineage"]:
+                        print(
+                            f"""_It: {item["iteration"]}, Tool: {item["tool"]}, Forced: {item["forced_retriever"]} """)
                 print(
-                    "\n          _____________________________________________________________________________________________\n")
+                    "\n\n          _____________________________________________________________________________________________\n")
 
 
     async def run():
@@ -296,20 +316,19 @@ if __name__ == "__main__":
         await asyncio.sleep(1.0)
 
         # astream instead of ainvoke — see each node's output as it happens
-        async for step in reflection_app.astream(
-                {
-                    "query": "How is time experienced by people, and what shapes that experience?",
-                    "answer": "",
-                    "needs_revision": False,
-                    "feedback": "",
-                    "iteration": 0,
-                    "corpora": {
-                        "A": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None},
-                        "B": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None},
-                    }
-                },
-                stream_mode="updates",
-        ):
+        initial_state = {
+            "query": "How is time experienced by people, and what shapes that experience?",
+            "answer": "",
+            "needs_revision": False,
+            "feedback": "",
+            "iteration": 0,
+            "corpora": {
+                "A": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None},
+                "B": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None},
+            }
+        }
+        print(f"""________Query: {initial_state["query"]} >>>""")
+        async for step in reflection_app.astream(initial_state, stream_mode="updates"):
             show(step)
 
         server_task.cancel()
