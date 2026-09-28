@@ -49,7 +49,8 @@ class ReflectionState(TypedDict):
 
 class CorpusCritique(BaseModel):
     """One book's verdict: is the evidence there, and if not, why."""
-    corpus_id: Literal["A", "B"] = Field(description="the id of the book this verdict is about, exactly as given in the context")
+    corpus_id: Literal["A", "B"] = Field(
+        description="the id of the book this verdict is about, exactly as given in the context")
     label: Literal["ok", "miss", "silent"] = Field(
         description="'ok' is when chunks support a real answer for this book. 'miss' is when the book probably addresses it, but retrieval didn't surface it (wrong words count as a miss). 'silent' is when the chunks show the book doesn't address it. Related material in other words points to a miss. Unrelated material points to silence. A narrowed retry that still comes back empty is the best evidence of silence. So, on the first look the default leans toward miss, and silent needs the evidence to stack up.")
     reason: str = Field(
@@ -73,13 +74,16 @@ class Critique(BaseModel):
 # MARK: RETRIEVER
 async def retriever(state: ReflectionState):
     """This function retrieves chunks over a query, once per book in state["corpora"]."""
-    # * 1 - This section builds server tools and agent creation, per-book.
-    global bridged_tools_by_corpus, retrieval_agents_by_corpus  # caches mcp's call and create_agent call.
+
+    # 1 - This section gets server tools and agent creation, per-book.
+    global bridged_tools_by_corpus, retrieval_agents_by_corpus  # caches mcp and create_agent calls.
     corpora_updates = {}
+
     for corpus_id in state["corpora"]:
-        if corpus_id not in bridged_tools_by_corpus:  # have I already built the tools for this book ? if yes, cache in bridged_tools_by_corpus.
-            bridged_tools_by_corpus[corpus_id] = await mcp_tools_as_langchain_tools(http_client, corpus_id)
-        bridged_tools = bridged_tools_by_corpus[corpus_id]
+        if corpus_id not in bridged_tools_by_corpus:  # have I already built the tools for this book ?
+            bridged_tools_by_corpus[corpus_id] = await mcp_tools_as_langchain_tools(http_client,
+                                                                                    corpus_id)  # if no, create it.
+        bridged_tools = bridged_tools_by_corpus[corpus_id]  # if yes, use the cached one.
         if corpus_id not in retrieval_agents_by_corpus:
             retrieval_agents_by_corpus[corpus_id] = create_agent(
                 model=llm,
@@ -91,23 +95,35 @@ async def retriever(state: ReflectionState):
                 system_prompt=system_prompt,
             )
         retrieval_agent = retrieval_agents_by_corpus[corpus_id]
-        # * 2 - This section sets the argument for retrieval
-        if state["corpora"][corpus_id]["narrowed_query"]:
+
+        # 2 - This section decides whether to Retrieve w/ what query.
+        if state["corpora"][corpus_id]["label"] is None:  # first-run, label not yet set.
+            argument = state["query"]
+        elif state["corpora"][corpus_id]["label"] == "miss":
             argument = state["corpora"][corpus_id]["narrowed_query"]
         else:
-            argument = state["query"]
+            corpora_updates[corpus_id] = {
+                "chunks": state["corpora"][corpus_id]["chunks"],
+                "lineage": state["corpora"][corpus_id]["lineage"],
+                "label": state["corpora"][corpus_id]["label"],
+                "reason": state["corpora"][corpus_id]["reason"],
+                "narrowed_query": None,
+            }
+            continue
         result = await retrieval_agent.ainvoke(
             {"messages": [HumanMessage(content=argument)]}
         )
-        # * 3 -  This section sets accumulators for corpora
+        # 3 - setting the accumulators
         chunks_list = []
         tool_call_ids = set([])
         lineage_dict = []
 
+        # 4 - filtering succeeded messages before chunks and tool calls append.
         for msg in result["messages"]:
             if isinstance(msg, ToolMessage) and msg.status == "success":
                 chunks_list.extend(json.loads(msg.content))
                 tool_call_ids.add(msg.tool_call_id)
+        # 5 - getting lineage from succeeded tool calls.
         for msg in result["messages"]:
             if isinstance(msg, AIMessage):
                 for tc in msg.tool_calls:
@@ -161,18 +177,11 @@ def format_context(corpora: dict[str, CorpusState]) -> str:
 # MARK: COMPOSER
 def composer(state: ReflectionState):
     """
-    This function composes an answer for: retrieved chunks from a query|narrowed_query, a Critique
+    This function composes an answer on how chunks answers the query.
     """
     context = format_context(state["corpora"])  # organize chunks per-book
-
-    # 1 - This branch deals with new chunks right from retriever due to previous round's narrowed_query and needs_revision.
-    if state["corpora"][CORPUS_ID]["narrowed_query"] and state["needs_revision"]:
-        prompt = f"Given this context {context}, the query {state['corpora'][CORPUS_ID]['narrowed_query']},  and the previous answer{state['answer']} , critique to address this feedback {state['feedback']}"
-
-    # 2 - This branch deals with old chunks when previous round asked for revision without a narrowed_query.
-    elif state["needs_revision"]:
-        prompt = f"Given this context {context}, the query {state['query']} and the previous answer{state['answer']} critique to address this feedback {state['feedback']}"
-    # 3 - This branch deals with the round, right after retriever.
+    if state["needs_revision"]:
+        prompt = f"Given this context {context}, the query {state['query']}, the previous answer{state['answer']}, critique to address this feedback {state['feedback']}"
     else:
         prompt = f"Given this context {context}, write a short (3-4 sentence) factual note on: {state['query']}"
 
@@ -265,11 +274,19 @@ def reflect(state: ReflectionState):
 
 def route_after_reflection(state: ReflectionState):
     """This function routes the flow"""
-    if not state["needs_revision"] or state["iteration"] >= MAX_ITERATIONS:
+    has_miss = False
+    for corpus_id in state["corpora"]:
+        if state["corpora"][corpus_id]["label"] == "miss":
+            has_miss = True
+
+    if state["iteration"] >= MAX_ITERATIONS:
         return END
-    if state["corpora"][CORPUS_ID]["narrowed_query"]:
+    elif has_miss:
         return "retriever"
-    return "composer"
+    elif state["needs_revision"]:
+        return "composer"
+    else:
+        return END
 
 
 reflection_graph = StateGraph(ReflectionState)

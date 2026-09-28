@@ -7,9 +7,9 @@
 - **v1 (frozen, 2026-09-16)** — single corpus, two separate agents: a fixed reflect-loop graph and a tool-flexible MCP
   demo agent. No comparison capability, no quality loop on the flexible agent.
 - **v2 (in progress)** — merges the two agents into one graph and generalizes it to compare two corpora ("Parallel
-  Prose": what do two books say about an issue). Items 1 (the merge, 2026-09-19), 2 (two corpora, 2026-09-24), and 4
-  (reflect as diagnostic router, 2026-09-27) are done; items 5–6 are designed, not yet built (item 3 was dropped, see
-  "Considered and dropped").
+  Prose": what do two books say about an issue). Items 1 (the merge, 2026-09-19), 2 (two corpora, 2026-09-24), 4
+  (reflect as diagnostic router, 2026-09-27), and 5 (per-corpus retry, 2026-09-28) are done; item 6 is designed, not
+  yet built (item 3 was dropped, see "Considered and dropped").
 - **v3 (planned)** — starts once v2 is complete, with an evaluation harness and demo packaging; the other ideas stay in
   the backlog, deliberately deferred, not forgotten.
 - **RAG-Tetris** — a separate future project (comparing code across versions), out of scope here.
@@ -96,6 +96,25 @@ draft without seeing the chunks. **Synergy:** the piece that makes items 1 and 2
 independently. Also the direct dependency for items 5 and 6 below.
 
 ### 5. Per-corpus retry
+
+**Status: done, 2026-09-28.** Built as designed (see `project_item5_per_corpus_retry_decisions.md`), validated with
+one real run on both books:
+
+- `retriever`'s per-book loop now reads each book's `label` before running: `None` (round 1) or `"miss"` falls through
+  to the existing query/narrowed_query logic; `"ok"` or `"silent"` skips retrieval and forwards that book's slot
+  (`chunks`, `lineage`, `label`, `reason`, `narrowed_query`) unchanged into `corpora_updates`, then `continue`s to the
+  next book (see `CLAUDE.md`, "State invariants").
+- `composer` lost its per-book loop: one prompt per call, chosen once from `needs_revision` alone (`context` still
+  carries every book's current chunks either way); `narrowed_query` no longer enters the prompt text, since it already
+  did its job steering `retriever`.
+- `route_after_reflection` now scans every book for `label == "miss"` before deciding (no `return` inside that scan),
+  so a book's position in `state["corpora"]` no longer decides the route; the case where nothing needs revision and no
+  book is a miss now falls to `END` instead of returning `None`.
+- The real run confirmed the skip directly: across two later retry rounds, book A (`ok`) stayed frozen at 2 lineage
+  entries while book B (`miss`) picked up new ones each retry, and B's label flipped `miss -> ok` once its narrowed
+  retries changed its chunks.
+- Open, deliberately left for item 6 (finding 3 from item 4): once every book is `ok`, `needs_revision` can still stay
+  `True` — the validation run ended via `MAX_ITERATIONS`, not a stop rule.
 
 **What:** sharpen the existing retry edge so only the corpus `reflect` flags gets a narrowed-query retry — the other
 corpus's already-good retrieval isn't redone. **Why:** today's retry is all-or-nothing across both corpora, wasting cost
