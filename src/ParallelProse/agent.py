@@ -71,6 +71,22 @@ class Critique(BaseModel):
         description="Is exactly one entry for each book in the context, none skipped")
 
 
+class CorpusFinding(BaseModel):
+    corpus_id: Literal["A", "B"] = Field(
+        description="the id of the book this finding is about, exactly as given in the context")
+    finding: str = Field(
+        description="What this one book alone asserts about the query, restricted to whatever wasn't already pulled into the top-level agreement/disagreement. Or, if this book's label is 'silent', a direct statement that it doesn't address the query")
+
+
+class ComposerAnswer(BaseModel):
+    """Agreement Disagreement"""
+    agreement: str = Field(
+        description="Agreement means what both books actually claim in common about the query. A substantive point they both assert — not just a subject both happen to touch on. ")
+    disagreement: str = Field(
+        description="It's a point where the books' claims conflict, both books make a claim about the same specific point, and the claims contradict. It`s not just a point where their subjects diverge, both books touch the same broad subject but make claims about different facets of it — nothing actually contradicts, because there's no shared point to compare.")
+    unique_findings: list[CorpusFinding] = Field(description="one entry per book, none skipped")
+
+
 # MARK: RETRIEVER
 async def retriever(state: ReflectionState):
     """This function retrieves chunks over a query, once per book in state["corpora"]."""
@@ -179,14 +195,25 @@ def composer(state: ReflectionState):
     """
     This function composes an answer on how chunks answers the query.
     """
+    book_map = "\n".join(
+        f"""{corpus_id} = {CATALOG[corpus_id].book_title}, label: {state["corpora"][corpus_id]["label"]}""" for
+        corpus_id in state["corpora"])
     context = format_context(state["corpora"])  # organize chunks per-book
+
     if state["needs_revision"]:
-        prompt = f"Given this context {context}, the query {state['query']}, the previous answer{state['answer']}, critique to address this feedback {state['feedback']}"
+        prompt = f"Given this context {context}, the query {state['query']}, the previous answer{state['answer']}, the book mapping {book_map}, critique to address this feedback {state['feedback']}"
     else:
         prompt = f"Given this context {context}, write a short (3-4 sentence) factual note on: {state['query']}"
 
-    answer = llm.invoke(prompt).content
-    return {"answer": answer, "iteration": state["iteration"] + 1}
+    llm_call = llm.with_structured_output(ComposerAnswer)
+    structured_answer = llm_call.invoke(prompt)
+    for corpus_id in state["corpora"]:
+        if state["corpora"][corpus_id]["label"] == "silent":
+            for slot in structured_answer.unique_findings:
+                if slot.corpus_id == corpus_id:
+                    slot.finding = "query content is absent"
+
+    return {"answer": structured_answer, "iteration": state["iteration"] + 1}
 
 
 def format_attempts(corpora: dict[str, CorpusState]) -> str:
@@ -280,6 +307,7 @@ def route_after_reflection(state: ReflectionState):
             has_miss = True
 
     if state["iteration"] >= MAX_ITERATIONS:
+        print("END - MAX_ITERATIONS reached")
         return END
     elif has_miss:
         return "retriever"
@@ -310,7 +338,10 @@ if __name__ == "__main__":
                 for corpus_id in update["corpora"]:
                     print(f"""_Chunks: {corpus_id} -  {len(update["corpora"][corpus_id]["chunks"])} items""")
             if node == "composer":
-                print(f"""_Answer: {update["answer"][:width]}""")
+                print(f"""_Agreement: {update["answer"].agreement[:width]}""")
+                print(f"""_Disagreement: {update["answer"].disagreement[:width]}\n""")
+                for slot in update["answer"].unique_findings:
+                    print(f"""_Findings: {slot.corpus_id} - {slot.finding[:width]}""")
             if node == "reflect":
                 print(f"""_Feedback:  {update["feedback"][:width]}""")
                 print(f"""_Needs_revision: {update["needs_revision"]}\n""")

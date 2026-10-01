@@ -123,6 +123,11 @@ item 2's nested state — it's the "act on the diagnosis" step.
 
 ### 6. Composer produces structured comparison output
 
+**Status: in progress, started 2026-09-30.** Atomized into three functions, each walked and built separately:
+`composer` (structured slots + explicit silence, 6.1 — in progress), `reflect` (critiquing the structured output
+instead of a blended narrative, 6.2), and `route_after_reflection` (the stop rule parked from item 5's finding 3 —
+once every book is `ok`, `needs_revision` can stay `True` forever with no retrieval left to try, 6.3).
+
 **What:** `composer`'s draft becomes explicit slots (agreement, disagreement, unique to each corpus) instead of one
 narrative paragraph. When `reflect` labels a corpus "silent," `composer` states that absence directly as a finding,
 instead of a hedged paragraph that reads like a failure. **Why:** structured slots are what make `reflect`'s per-corpus
