@@ -123,10 +123,23 @@ item 2's nested state — it's the "act on the diagnosis" step.
 
 ### 6. Composer produces structured comparison output
 
-**Status: in progress, started 2026-09-30.** Atomized into three functions, each walked and built separately:
-`composer` (structured slots + explicit silence, 6.1 — in progress), `reflect` (critiquing the structured output
-instead of a blended narrative, 6.2), and `route_after_reflection` (the stop rule parked from item 5's finding 3 —
-once every book is `ok`, `needs_revision` can stay `True` forever with no retrieval left to try, 6.3).
+**Status: done, 2026-10-02.** Atomized into three functions, each walked and built separately, as designed:
+
+- `composer` (6.1) returns `ComposerAnswer` — a top-level `agreement`/`disagreement` pair plus `unique_findings`
+  (`list[CorpusComposer]`, one `corpus_id`/`finding` entry per book), mirroring `Critique`/`CorpusCritique`'s own
+  nesting. A `"silent"` corpus's `finding` is overwritten in code after the LLM call, the same alibi mechanic as
+  `reflect`'s own `narrowed_query` guard — never left to the model's prose alone.
+- `reflect` (6.2) gets a new `format_answer` formatter (mirroring `format_context`/`format_attempts`'s contract) that
+  renders `agreement`/`disagreement` plus each corpus's `finding` by name; `reflect`'s one-line edit swaps the old raw
+  `state['answer']` interpolation for `format_answer(state['answer'])`. The `Critique` schema and the per-book
+  ok/miss/silent logic are untouched.
+- `route_after_reflection` (6.3) had its `elif needs_revision: return "composer"` branch deleted outright: since
+  `has_miss` is checked first, that branch was only ever reachable once no book was `miss` — it never gated a
+  distinct case, it was item 5 finding 3's bug itself. No book `miss` now falls straight to `END`.
+- Two real bugs caught and fixed during the build: `format_answer`'s signature was typed `answer: ComposerAnswer` but
+  the body subscripted it as a dict (`answer["answer"]`), only working because the call site accidentally passed the
+  whole `state` dict; fixed so the parameter and the call site (`format_answer(state['answer'])`) agree. A leftover
+  `print(1)` debug statement was also removed.
 
 **What:** `composer`'s draft becomes explicit slots (agreement, disagreement, unique to each corpus) instead of one
 narrative paragraph. When `reflect` labels a corpus "silent," `composer` states that absence directly as a finding,

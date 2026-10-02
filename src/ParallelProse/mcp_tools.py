@@ -29,8 +29,8 @@ for v in REGISTRY.values():
 @mcp.tool
 def call_parent_retriever(query: str, corpus: str) -> list[str]:
     """Semantic search: matches the query against small child chunks by meaning and returns their larger parent chunks, so each result comes with surrounding context.
-    Use it by default, for concepts, themes and open questions (e.g. "what does the author say about '<a subject>'  ?"), where the wording of the query may differ from the wording of the text.
-    Avoid it when the query hinges on one exact name or word; use call_bm_25_retriever for that."""
+Broad and tolerant of wording mismatch — the safest pick when the query doesn't clearly hinge on an exact name/word (bm_25), a named chapter (self_query), or a mix of both (ensemble).
+Avoid it only when one of those three narrower cases clearly applies."""
     return [i.page_content for i in REGISTRY[corpus].parent_retriever.invoke(query)]
 
 

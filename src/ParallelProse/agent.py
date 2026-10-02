@@ -22,7 +22,6 @@ llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
 MAX_ITERATIONS = 5
 MAX_TOOL_CALLS = 4
 FALLBACK_TOOL = "call_parent_retriever"
-CORPUS_ID = "A"
 
 system_prompt = " You must call at least one retrieval tool before finishing. You must not answer from your own knowledge, passages from the corpus are the only source. If the query looks impossible or wrong, you must still do the search. Use the query as given, only allow minor changes in the wording if it is to make it clearer. If a retrieval tool returns no results or an error, try a different retrieval tool."
 
@@ -175,8 +174,7 @@ async def retriever(state: ReflectionState):
 
 
 def format_context(corpora: dict[str, CorpusState]) -> str:
-    """One labeled block per book: a header naming the book, then that book's chunks.
-    Returns a single string for the composer prompt."""
+    """This function returns the retrieved chunks as a string, to feed composer prompt. The formatting is: one labeled block per book: a header naming the book, then that book's chunks."""
     blocks = []
     for corpus_id, slot in corpora.items():
         header = f"corpus_id: {corpus_id} = Book_title: {CATALOG[corpus_id].book_title} - Author: {CATALOG[corpus_id].author}\n"
@@ -217,11 +215,11 @@ def composer(state: ReflectionState):
 
 
 def format_attempts(corpora: dict[str, CorpusState]) -> str:
-    """Returns a string for reflect's prompt formatted as one block per book: the queries already tried, one line per attempt.
+    """Returns lineage as a string for reflect's prompt formatted as one block per book: the queries already tried, one line per attempt.
     """
     blocks = []
     for corpus_id, slot in corpora.items():
-        header = f"corpus_id: {corpus_id} = Book_title: {CATALOG[corpus_id].book_title} - Author: {CATALOG[corpus_id].author}\n"
+        header = f"Corpus_id: {corpus_id} = Book_title: {CATALOG[corpus_id].book_title} - Author: {CATALOG[corpus_id].author}\n"
         if not slot["lineage"]:
             body = "no attempts so far"
         else:
@@ -234,22 +232,30 @@ def format_attempts(corpora: dict[str, CorpusState]) -> str:
     return "\n\n".join(blocks)
 
 
+def format_answer(answer: ComposerAnswer) -> str:
+    """This function formats ComposerAnswer as a string to feed reflect`s prompt."""
+    header = f"""Agreement: {answer.agreement}\nDisagreement: {answer.disagreement} """
+    body = "\n".join(
+        f"""Corpus_id: {slot.corpus_id} = Finding: {slot.finding}""" for slot in answer.unique_findings)
+    return "\n\n".join([header, body])
+
+
 # MARK: REFLECT
 def reflect(state: ReflectionState):
     """This is an "optimizer" function that returns an evaluation to ground upstream refinement, if needed. It works by applying a Critique judgment over composer's answer."""
 
-    # 1 - This section sets the structural information to feed the llm.
+    # 1 - This section sets structural information to feed the llm.
     book_map = "\n".join(
         f"{corpus_id} = {CATALOG[corpus_id].book_title}" for corpus_id in state["corpora"])
     attempts = format_attempts(state["corpora"])
     chunks = format_context(state["corpora"])
-
+    answer = format_answer(state['answer'])
     # 2 - This section gets a Critique by calling the llm.
     structured_llm = llm.with_structured_output(Critique)
     critique = structured_llm.invoke(
         f"Books:\n{book_map}\n\n"
         f"Query: {state['query']}\n\n"
-        f"Answer:\n{state['answer']}\n\n"
+        f"Answer:\n{answer}\n\n"
         f"Retrieved passages per book:\n{chunks}\n\n"
         f"Queries already tried per book:\n{attempts}\n\n"
         "Critique the answer for factual accuracy and completeness against the retrieved passages.\n"
@@ -311,8 +317,6 @@ def route_after_reflection(state: ReflectionState):
         return END
     elif has_miss:
         return "retriever"
-    elif state["needs_revision"]:
-        return "composer"
     else:
         return END
 
@@ -349,12 +353,13 @@ if __name__ == "__main__":
                     print(f"""_Chunks: {corpus_id} - {len(update["corpora"][corpus_id]["chunks"])} items""")
                     print(f"""  _Label: {update["corpora"][corpus_id]["label"]} """)
                     print(f"""    _Reason: {update["corpora"][corpus_id]["reason"]} """)
-                    print(f"""      _Narrowed_query: {update["corpora"][corpus_id]["narrowed_query"]}\n""")
+                    print(f"""      _Narrowed_query: {update["corpora"][corpus_id]["narrowed_query"]}""")
                     for item in update["corpora"][corpus_id]["lineage"]:
                         print(
-                            f"""_It: {item["iteration"]}, Tool: {item["tool"]}, Forced: {item["forced_retriever"]} """)
+                            f"""       _It: {item["iteration"]}, Tool: {item["tool"]}, Forced: {item["forced_retriever"]}""")
+                    print("\n")
                 print(
-                    "\n\n          _____________________________________________________________________________________________\n")
+                    "\n          _____________________________________________________________________________________________\n")
 
 
     async def run():
