@@ -60,13 +60,17 @@ class CorpusCritique(BaseModel):
     )
 
 
-class Critique(BaseModel):
-    """The whole verdict: one entry per book, plus the draft-level signal."""
+class ComparisonCritique(BaseModel):
+    """The cross-book comparison verdict only — no per-book entries, no passages: judges the agreement/disagreement as a whole."""
     needs_revision: bool = Field(
         description="True if the answer has a real gap or error worth fixing"
     )
     feedback: str = Field(
-        description="What's wrong and what to fix, or why it's fine. Each finding already carries its own verbatim quote as evidence — never flag a finding for lacking textual references or ask for a quote to be 'integrated'; that's already done. Critique facts and completeness against the retrieved passages only.")
+        description="Judge from the query and from answer's 'agreement' and 'disagreement' text alone. Make no mention of passages, quotes, or per-book findings.")
+
+
+class PerBookCritique(BaseModel):
+    """Holds one verdict per book — label, reason, narrowed_query — none skipped. No draft-level signal here."""
     corpora_critique: list[CorpusCritique] = Field(
         description="Is exactly one entry for each book in the context, none skipped")
 
@@ -82,7 +86,6 @@ class CorpusFinding(BaseModel):
 
 class ComposerAnswer(BaseModel):
     """Agreement Disagreement"""
-
     agreement: str = Field(
         description="Agreement means what both books actually claim in common about the query. A substantive point they both assert — not just a subject both happen to touch on. ")
     disagreement: str = Field(
@@ -90,7 +93,7 @@ class ComposerAnswer(BaseModel):
     unique_findings: list[CorpusFinding] = Field(description="one entry per book, none skipped")
 
 
-_server_task: asyncio.Task | None = None
+_server_task: asyncio.Task | None = None  # guard to void re-calling
 
 
 # MARK: RETRIEVER
@@ -255,16 +258,16 @@ def format_answer(answer: ComposerAnswer) -> str:
 def reflect(state: ReflectionState):
     """This is an "optimizer" function that returns an evaluation to ground upstream refinement, if needed. It works by applying a Critique judgment over composer's answer."""
 
-    # 1 - This section sets structural information to feed the llm.
+    # 1 - This section gets the data for the per-book call..
     book_map = "\n".join(
         f"Corpus_id: {corpus_id} = {CATALOG[corpus_id].book_title} - Era: {CATALOG[corpus_id].era}" for corpus_id in
         state["corpora"])
     attempts = format_attempts(state["corpora"])
     chunks = format_context(state["corpora"])
     answer = format_answer(state['answer'])
-    # 2 - This section gets a Critique by calling the llm.
-    structured_llm = llm.with_structured_output(Critique)
-    critique = structured_llm.invoke(
+    # 2 - This section does a per-book call.
+    per_book_llm = llm.with_structured_output(PerBookCritique)
+    per_book = per_book_llm.invoke(
         f"Books:\n{book_map}\n\n"
         f"Query: {state['query']}\n\n"
         f"Answer:\n{answer}\n\n"
@@ -277,15 +280,20 @@ def reflect(state: ReflectionState):
         "Each finding already includes its own verbatim quote in parentheses — do not treat that as "
         "missing evidence or ask for quotes to be added or integrated; judge factual accuracy and "
         "completeness only.\n"
-        "feedback must judge the comparison as a whole only — never single out one book's depth or "
-        "nuance specifically; that's reason's job for that book, already captured in corpora_critique.\n"
-        "Return needs_revision and feedback for the answer as a whole.\n"
         "Then, for each book listed above, add one entry to corpora_critique: corpus_id must be "
         "exactly A or B as given above, plus label, reason, and narrowed_query."
     )
-    # 3 - This section saves the Critique in a per-book structure.
+    # 2 - comparison call: restricted inputs, new schema
+    comparison_prompt = f"Query: {state['query']}\n" \
+                        f"Agreement: {state['answer'].agreement}\n" \
+                        f"Disagreement: {state['answer'].disagreement}\n" \
+                        "<instruction: judge the comparison as a whole; you have no access to per-book chunks or findings, so you cannot and must not reference one book's depth specifically>"
+    comparison_llm = llm.with_structured_output(ComparisonCritique)
+    comparison = comparison_llm.invoke(comparison_prompt)
+
+    # X - This section saves the Critique in a per-book structure.
     verdicts = {}
-    for slot in critique.corpora_critique:
+    for slot in per_book.corpora_critique:
         if slot.corpus_id == "A":
             if slot.label != "miss":
                 slot.narrowed_query = None
@@ -304,8 +312,8 @@ def reflect(state: ReflectionState):
                              }
 
     return {
-        "feedback": critique.feedback,
-        "needs_revision": critique.needs_revision,
+        "feedback": comparison.feedback,
+        "needs_revision": comparison.needs_revision,
         "corpora":
             {"A": {
                 "chunks": state["corpora"]["A"]["chunks"],

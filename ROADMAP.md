@@ -10,11 +10,13 @@
   Prose": what do two books say about an issue). Items 1 (the merge, 2026-09-19), 2 (two corpora,
   2026-09-24), 4 (reflect as diagnostic router, 2026-09-27), 5 (per-corpus retry, 2026-09-28), and 6 (structured
   composer output, 2026-10-02) are all done (item 3 was dropped, see "Considered and dropped").
-- **v3 (in progress, started 2026-10-02)** — seven ordered phases: era-annotation and quote-extraction (items 7-8,
+- **v3 (in progress, started 2026-10-02)** — eight ordered phases: era-annotation and quote-extraction (items 7-8,
   the two cheap wins), then app packaging (item 9), then making `Critique` 2-book native in two steps — a cheap
-  instruction-only try (item 10) measured before deciding on a structural fix (item 11) — then a proper test suite (item
-  12), then the evaluation harness (item 13). Items 7 (era-annotation), 8 (quote-extraction), and 9 (app
-  packaging) are all done (2026-10-02) — see "v3 — after v2 is complete" below.
+  instruction-only try (item 10) measured before deciding on a structural fix (item 11) — then a synthesis layer
+  connecting targeted queries to a stated objective (item 12), then a proper test suite (item 13), then the
+  evaluation harness (item 14). Items 7 (era-annotation), 8 (quote-extraction), 9 (app packaging), 10 (instruction-only
+  try, measured, didn't work), and 11 (structural fix, validated against item 10's own test) are all done
+  (2026-10-02 through 2026-10-03) — see "v3 — after v2 is complete" below.
 - **RAG-Tetris** — a separate future project (comparing code across versions), out of scope here.
 
 Suggested build order below follows dependency, not memory-entry order: state shape and the merge come first because
@@ -289,19 +291,55 @@ query-scope complaints). Its measured leak rate is the direct input to item 11's
 
 ### 11. `Critique` becomes 2-book native — structural (triggered by item 10's result)
 
-**Status: ready to start, 2026-10-03.** Item 10's measured 0-of-6 result is the trigger condition this item was
-waiting on — proceed. **What:** split `reflect`'s one LLM call into two: an unchanged per-book call
-(`label`/`reason`/`narrowed_query`) and a second, context-restricted call that never sees per-book chunks or
-findings, so it structurally cannot comment on per-book depth. Item 10's actual leak examples (all 6 runs named a
-specific book — e.g. "Debord's work is not sufficiently emphasized," "Augustine's discussion... could be
-elaborated") calibrate this second call's prompt and acceptance test, rather than designing it blind. **Why:**
-instruction-only scoping (item 10) asked the model to honor a distinction it didn't honor even once in 6 tries —
-removing the model's *access* to per-book detail during the comparison-level judgment is the only real structural
-guarantee against the same leak recurring. **Synergy:** directly consumes item 10's findings; must land before the
-test suite (item 12) so the suite is written against `Critique`'s fully settled shape, not one about to change
-again.
+**Status: done, validated, 2026-10-03.** Built as designed (see `notebooks/ParallelProse/v3-01-graphs.ipynb`,
+item 11), plus what the build turned out to need:
 
-### 12. Test suite
+- `reflect` stays one function and one graph node — no changes to `route_after_reflection`, `show()`, or the
+  graph's wiring. `Critique` splits into two schemas instead: `PerBookCritique` (`corpora_critique`, today's
+  unchanged per-book call) and `ComparisonCritique` (`needs_revision`/`feedback` only). The comparison call's
+  prompt carries only `state['query']` and `state['answer']`'s `agreement`/`disagreement` strings — never chunks,
+  attempts, or per-book `finding`/`quote`.
+- One real bug caught during the build: `ComparisonCritique`'s class docstring and `feedback` field description
+  were left over from the old 3-field `Critique` — one described "one entry per book," the other instructed the
+  model to ground itself in "retrieved passages," neither of which this restricted call has access to. Both are
+  schema-level text sent to the model as part of structured-output generation, so this was a real leaked surface,
+  not just stale documentation; both were rewritten to describe only what each schema actually holds.
+- Validated two ways: one real run confirmed `feedback` never named a book while both books independently landed
+  `ok` with grounded, chunk-specific `reason` text (the unchanged per-book call still works). Then item 10's exact
+  6-run test (3 compound-query, 3 non-compound) was rerun against the new split — **0 of 6 leaked**, reversing
+  item 10's 0-of-6 *pass* rate to a 6-of-6 *pass* rate on the identical acceptance test.
+
+**What:** split `reflect`'s one LLM call into two: an unchanged per-book call (`label`/`reason`/`narrowed_query`)
+and a second, context-restricted call that never sees per-book chunks or findings, so it structurally cannot
+comment on per-book depth. Item 10's actual leak examples (all 6 runs named a specific book — e.g. "Debord's work
+is not sufficiently emphasized," "Augustine's discussion... could be elaborated") calibrate this second call's
+prompt and acceptance test, rather than designing it blind. **Why:** instruction-only scoping (item 10) asked the
+model to honor a distinction it didn't honor even once in 6 tries — removing the model's *access* to per-book
+detail during the comparison-level judgment is the only real structural guarantee against the same leak
+recurring. **Synergy:** directly consumes item 10's findings; must land before the test suite (item 13) so the
+suite is written against `Critique`'s fully settled shape, not one about to change again.
+
+### 12. Synthesis layer — connect targeted queries to a stated objective
+
+**Status: planned.** **What:** a standalone, non-graph function (`synthesize(objective, bites) -> Synthesis`)
+that reads a session log of already-finished `(query, ComposerAnswer)` bites plus one fixed objective, and
+returns a connective narrative plus an `uncovered_angle`/`candidate_query` naming what the objective still
+lacks — a suggestion only, never auto-run; the human decides every query, including whether to take the
+suggestion. A companion `save_bite`/`load_bites` pair persists bites to a flat JSON session file
+(`{"objective": ..., "bites": [...]}`), one objective set once per series. Paired with a brief for Claude web
+(`docs/claude_web_query_brief.md`) instructing it to decompose a theme into one or more bounded objectives
+(splitting when a theme fails the common-throughline test — do all of one objective's queries plausibly weave
+into one narrative?) and each objective into single-themed, non-compound queries. **Why:** `composer`/`reflect`
+are built and validated around one targeted query at a time (items 4-11); bending them to also reason about a
+broader, cross-query objective risks the same half-adopted-axis bug item 10/11 just fixed — one node aware of a
+new concern, the rest of the graph blind to it — and unlike the two-book axis, "served the objective" has no
+falsifiable schema field the way `label`/`reason` do, so a corrupted grounding loop would be far harder to catch.
+Keeping the objective entirely outside the grounding loop, as a function that only ever consumes already
+quote-backed answers, avoids both risks. **Synergy:** manual-first by design — automatic chasing (the system
+deciding to run its own suggested query) is deliberately deferred until the manual version proves useful. Lands
+before the test suite (item 13), since it's new, untested surface the suite should cover from the start.
+
+### 13. Test suite
 
 **Status: planned.** **What:** a proper `tests/` suite covering the graph's core node logic — `retriever`'s
 skip-on-`ok`/`silent`, `composer`'s silent-override (`finding` + `quote` blanking), `reflect`'s per-book label
@@ -311,13 +349,13 @@ current state shape where still relevant, dropped where superseded). **Why:** to
 stale functions — `test_accumulation` still assumes the flat pre-item-2 state shape (`narrowed_query`/`chunks`/
 `lineage` at the top level, not nested under `corpora`) and would crash if run; none of the three assert anything,
 they just print; and they sit mixed in with live-call demo code in the same `__main__` block (see `CLAUDE.md`,
-"Guard module side effects"). **Synergy:** lands after packaging (item 9) and after `Critique`'s 2-book-native
-shape settles (items 10-11), because `run_query()` and `Critique` are exactly the two things this suite needs to
-test against a shape that's finished changing; also lands before the eval harness (item 13), because that harness
-checks answer *quality*, a different concern from code correctness — it benefits from running against code that's
-already covered, not the other way around.
+"Guard module side effects"). **Synergy:** lands after packaging (item 9), after `Critique`'s 2-book-native
+shape settles (items 10-11), and after the synthesis layer (item 12), because `run_query()`, `Critique`, and
+`synthesize()` are exactly the things this suite needs to test against shapes that are finished changing; also
+lands before the eval harness (item 14), because that harness checks answer *quality*, a different concern from
+code correctness — it benefits from running against code that's already covered, not the other way around.
 
-### 13. Evaluation harness
+### 14. Evaluation harness
 
 **Status: planned.** **What:** a LangSmith-hosted golden set (~10 targeted questions against Augustine/Debord,
 including at least one question only one book addresses, to exercise `reflect`'s `"silent"` case), traced
