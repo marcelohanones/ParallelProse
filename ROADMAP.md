@@ -10,13 +10,18 @@
   Prose": what do two books say about an issue). Items 1 (the merge, 2026-09-19), 2 (two corpora,
   2026-09-24), 4 (reflect as diagnostic router, 2026-09-27), 5 (per-corpus retry, 2026-09-28), and 6 (structured
   composer output, 2026-10-02) are all done (item 3 was dropped, see "Considered and dropped").
-- **v3 (in progress, started 2026-10-02)** — eight ordered phases: era-annotation and quote-extraction (items 7-8,
-  the two cheap wins), then app packaging (item 9), then making `Critique` 2-book native in two steps — a cheap
-  instruction-only try (item 10) measured before deciding on a structural fix (item 11) — then a synthesis layer
-  connecting targeted queries to a stated objective (item 12), then a proper test suite (item 13), then the
-  evaluation harness (item 14). Items 7 (era-annotation), 8 (quote-extraction), 9 (app packaging), 10 (instruction-only
-  try, measured, didn't work), and 11 (structural fix, validated against item 10's own test) are all done
-  (2026-10-02 through 2026-10-03) — see "v3 — after v2 is complete" below.
+- **v3 (done, 2026-10-03)** — five ordered phases: era-annotation and quote-extraction (items 7-8, the two cheap
+  wins), then app packaging (item 9), then making `Critique` 2-book native in two steps — a cheap instruction-only
+  try (item 10) measured before deciding on a structural fix (item 11). Items 7 (era-annotation), 8
+  (quote-extraction), 9 (app packaging), 10 (instruction-only try, measured, didn't work), and 11 (structural fix,
+  validated against item 10's own test) are all done (2026-10-02 through 2026-10-03) — see "v3 — after v2 is
+  complete" below.
+- **v4 (in progress, started 2026-10-03)** — a synthesis layer connecting several targeted queries to a stated
+  objective (item 12, in progress), then a proper test suite (item 13), then the evaluation harness (item 14).
+  The synthesis layer was always its own version — a distinct capability layered on top of a finished, tested
+  two-book comparison system; the test suite and eval harness moved here from v3 since v3's own completion no
+  longer waits on them, and now land after the synthesis layer so they cover it too. See "v4 — after v3 is
+  complete" below.
 - **RAG-Tetris** — a separate future project (comparing code across versions), out of scope here.
 
 Suggested build order below follows dependency, not memory-entry order: state shape and the merge come first because
@@ -319,25 +324,29 @@ detail during the comparison-level judgment is the only real structural guarante
 recurring. **Synergy:** directly consumes item 10's findings; must land before the test suite (item 13) so the
 suite is written against `Critique`'s fully settled shape, not one about to change again.
 
+## v4 — after v3 is complete
+
 ### 12. Synthesis layer — connect targeted queries to a stated objective
 
-**Status: planned.** **What:** a standalone, non-graph function (`synthesize(objective, bites) -> Synthesis`)
-that reads a session log of already-finished `(query, ComposerAnswer)` bites plus one fixed objective, and
-returns a connective narrative plus an `uncovered_angle`/`candidate_query` naming what the objective still
-lacks — a suggestion only, never auto-run; the human decides every query, including whether to take the
-suggestion. A companion `save_bite`/`load_bites` pair persists bites to a flat JSON session file
-(`{"objective": ..., "bites": [...]}`), one objective set once per series. Paired with a brief for Claude web
-(`docs/claude_web_query_brief.md`) instructing it to decompose a theme into one or more bounded objectives
-(splitting when a theme fails the common-throughline test — do all of one objective's queries plausibly weave
-into one narrative?) and each objective into single-themed, non-compound queries. **Why:** `composer`/`reflect`
-are built and validated around one targeted query at a time (items 4-11); bending them to also reason about a
-broader, cross-query objective risks the same half-adopted-axis bug item 10/11 just fixed — one node aware of a
-new concern, the rest of the graph blind to it — and unlike the two-book axis, "served the objective" has no
-falsifiable schema field the way `label`/`reason` do, so a corrupted grounding loop would be far harder to catch.
-Keeping the objective entirely outside the grounding loop, as a function that only ever consumes already
-quote-backed answers, avoids both risks. **Synergy:** manual-first by design — automatic chasing (the system
-deciding to run its own suggested query) is deliberately deferred until the manual version proves useful. Lands
-before the test suite (item 13), since it's new, untested surface the suite should cover from the start.
+**Status: in progress, started 2026-10-03.** **What:** a standalone, non-graph function
+(`synthesize(objective, bites) -> Synthesis`) that reads a session log of already-finished `(query,
+ComposerAnswer)` bites plus one fixed objective, and returns a connective narrative plus an
+`uncovered_angle`/`candidate_query` naming what the objective still lacks — a suggestion only, never auto-run;
+the human decides every query, including whether to take the suggestion. A companion `save_bite`/`load_bites`
+pair persists bites to a flat JSON session file (`{"objective": ..., "bites": [...]}`), one objective set once
+per series. Paired with a brief for Claude web (`docs/claude_web_query_brief.md`) instructing it to decompose a
+theme into one or more bounded objectives (splitting when a theme fails the common-throughline test — do all of
+one objective's queries plausibly weave into one narrative?) and each objective into single-themed, non-compound
+queries. **Why:** `composer`/`reflect` are built and validated around one targeted query at a time (items 4-11);
+bending them to also reason about a broader, cross-query objective risks the same half-adopted-axis bug item
+10/11 just fixed — one node aware of a new concern, the rest of the graph blind to it — and unlike the two-book
+axis, "served the objective" has no falsifiable schema field the way `label`/`reason` do, so a corrupted
+grounding loop would be far harder to catch. Keeping the objective entirely outside the grounding loop, as a
+function that only ever consumes already quote-backed answers, avoids both risks. **Synergy:** manual-first by
+design — automatic chasing (the system deciding to run its own suggested query) is deliberately deferred until
+the manual version proves useful. Kept as its own item within v4 rather than folded into the test suite or eval
+harness (items 13-14): it's a distinct capability layered on top of a finished, tested two-book comparison
+system, not a prerequisite for either of those, which cover the graph as it stands today.
 
 ### 13. Test suite
 
