@@ -277,6 +277,8 @@ def reflect(state: ReflectionState):
         "Each finding already includes its own verbatim quote in parentheses — do not treat that as "
         "missing evidence or ask for quotes to be added or integrated; judge factual accuracy and "
         "completeness only.\n"
+        "feedback must judge the comparison as a whole only — never single out one book's depth or "
+        "nuance specifically; that's reason's job for that book, already captured in corpora_critique.\n"
         "Return needs_revision and feedback for the answer as a whole.\n"
         "Then, for each book listed above, add one entry to corpora_critique: corpus_id must be "
         "exactly A or B as given above, plus label, reason, and narrowed_query."

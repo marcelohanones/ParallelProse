@@ -263,12 +263,17 @@ After testing v2, we have concluded that the architecture merge to turn v1 into 
 choices that weakened it making more a hybrid than a native 2-book system. So, two ways ahead: item 10 is the cheap one,
 and item 11 is the thorough one.
 
-**Status:
-planned.**
-**What:** add an
-explicit
-instruction to `reflect`'s prompt scoping `feedback` to
-the
+**Status: done, measured, did not work, 2026-10-03.** Built: one sentence inserted into `reflect`'s instruction
+block (agent.py:280-281) — "feedback must judge the comparison as a whole only — never single out one book's depth
+or nuance specifically; that's reason's job for that book, already captured in corpora_critique." Measured against
+the pre-declared test (does `feedback` single out one book's depth unprompted by the other) on 6 real runs, 3
+compound-query + 3 non-compound: **6 of 6 still singled out one book by name** ("Debord's work is not sufficiently
+emphasized," "Augustine's discussion... could be elaborated... Debord's insights... could be expanded"),
+`needs_revision=True` in all 6. The instruction-only lever, which partially worked for the earlier quote-integration
+and query-scope complaints, had no measurable effect on this specific failure mode. This result is the trigger for
+item 11.
+
+**What:** add an explicit instruction to `reflect`'s prompt scoping `feedback` to the
 cross-book comparison (agreement/disagreement) only, leaving all per-book depth to the existing `label`/`reason` —
 no schema change, no new fields. Measured, not assumed: run it repeatedly on real queries (compound and
 non-compound) and check whether `feedback`'s text ever singles out one book's depth unprompted by the other — a
@@ -282,21 +287,19 @@ nagging rate and content, ruling out query shape as the driver. **Synergy:** the
 prompt sentence, the same lever already proven partially effective twice this session (quote-integration,
 query-scope complaints). Its measured leak rate is the direct input to item 11's go/no-go decision.
 
-### 11. `Critique` becomes 2-book native — structural (only if item 10 isn't enough)
+### 11. `Critique` becomes 2-book native — structural (triggered by item 10's result)
 
-**Status: planned, contingent on item 10's measured results.** **What:** only if item 10's measured leak rate
-doesn't justify stopping there: split `reflect`'s one LLM call into two — an unchanged per-book call (`label`/`reason`/
-`narrowed_query`) and a second, context-restricted call that never sees per-book chunks or
-findings, so it structurally cannot comment on per-book depth. Item 10's actual leak examples (if any) calibrate
-this second call's prompt and acceptance test, rather than designing it blind. **Why:** instruction-only scoping (item
-
-10) asks the model to honor a distinction it's never guaranteed to honor — we already have two data points
-    this session of instruction tightening only partially working. Removing the model's *access* to per-book detail
-    during the comparison-level judgment is the only real structural guarantee against the same leak recurring.
-    **Synergy:**
-    directly consumes item 10's findings — doesn't start until item 10 has actually run and been measured;
-    must land before the test suite (item 12) so the suite is written against `Critique`'s fully settled shape, not one
-    about to change again.
+**Status: ready to start, 2026-10-03.** Item 10's measured 0-of-6 result is the trigger condition this item was
+waiting on — proceed. **What:** split `reflect`'s one LLM call into two: an unchanged per-book call
+(`label`/`reason`/`narrowed_query`) and a second, context-restricted call that never sees per-book chunks or
+findings, so it structurally cannot comment on per-book depth. Item 10's actual leak examples (all 6 runs named a
+specific book — e.g. "Debord's work is not sufficiently emphasized," "Augustine's discussion... could be
+elaborated") calibrate this second call's prompt and acceptance test, rather than designing it blind. **Why:**
+instruction-only scoping (item 10) asked the model to honor a distinction it didn't honor even once in 6 tries —
+removing the model's *access* to per-book detail during the comparison-level judgment is the only real structural
+guarantee against the same leak recurring. **Synergy:** directly consumes item 10's findings; must land before the
+test suite (item 12) so the suite is written against `Critique`'s fully settled shape, not one about to change
+again.
 
 ### 12. Test suite
 
