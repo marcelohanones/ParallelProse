@@ -6,12 +6,15 @@
 
 - **v1 (frozen, 2026-09-16)** — single corpus, two separate agents: a fixed reflect-loop graph and a tool-flexible MCP
   demo agent. No comparison capability, no quality loop on the flexible agent.
-- **v2 (in progress)** — merges the two agents into one graph and generalizes it to compare two corpora ("Parallel
-  Prose": what do two books say about an issue). Items 1 (the merge, 2026-09-19), 2 (two corpora, 2026-09-24), 4
-  (reflect as diagnostic router, 2026-09-27), and 5 (per-corpus retry, 2026-09-28) are done; item 6 is designed, not
-  yet built (item 3 was dropped, see "Considered and dropped").
-- **v3 (planned)** — starts once v2 is complete, with an evaluation harness and demo packaging; the other ideas stay in
-  the backlog, deliberately deferred, not forgotten.
+- **v2 (done, 2026-10-02)** — merges the two agents into one graph and generalizes it to compare two corpora ("Parallel
+  Prose": what do two books say about an issue). Items 1 (the merge, 2026-09-19), 2 (two corpora,
+  2026-09-24), 4 (reflect as diagnostic router, 2026-09-27), 5 (per-corpus retry, 2026-09-28), and 6 (structured
+  composer output, 2026-10-02) are all done (item 3 was dropped, see "Considered and dropped").
+- **v3 (in progress, started 2026-10-02)** — seven ordered phases: era-annotation and quote-extraction (items 7-8,
+  the two cheap wins), then app packaging (item 9), then making `Critique` 2-book native in two steps — a cheap
+  instruction-only try (item 10) measured before deciding on a structural fix (item 11) — then a proper test suite (item
+  12), then the evaluation harness (item 13). Items 7 (era-annotation), 8 (quote-extraction), and 9 (app
+  packaging) are all done (2026-10-02) — see "v3 — after v2 is complete" below.
 - **RAG-Tetris** — a separate future project (comparing code across versions), out of scope here.
 
 Suggested build order below follows dependency, not memory-entry order: state shape and the merge come first because
@@ -46,7 +49,8 @@ what the two-book case turned out to need:
 - Tools take a `corpus` the model never sees: the bridge removes it from the schema copy the model gets and adds it back
   from a closure before calling the server. Chosen over letting the model fill the slot, because a wrong book would fail
   silently.
-- `retriever` loops over `state["corpora"]`, with tools and inner agent cached per book, and writes each result into that
+- `retriever` loops over `state["corpora"]`, with tools and inner agent cached per book, and writes each result into
+  that
   book's own slot.
 - `composer` builds its context with `format_context`: one block per book, headed by the title and author from the
   catalog, with the chunks under it.
@@ -156,29 +160,178 @@ per corpus *before* retrieval, so it only has the model's memory of a work, not 
 two books (a commodities question) showed no gain: Augustine's on-topic hits went from `[0, 2, 5, 2]` to `[0, 0, 0, 3]`,
 and Debord's top chunks did not change. The retry loop already corrects a weak first query with evidence (`reflect` →
 `narrowed_query`), and a terminology-bridging tool needs a corpus-derived mapping source that does not exist. Judged not
-worth their cost for this project; revisit only if a measured failure shows the retry loop cannot recover a vocabulary gap.
+worth their cost for this project; revisit only if a measured failure shows the retry loop cannot recover a vocabulary
+gap.
+
+### Survey-style queries, thematic tagging, finer position metadata
+
+Dropped 2026-10-02. ParallelProse is scoped to targeted queries only (a specific question against the corpora), not
+survey queries (an open question about a book's overall scope, e.g. "what subjects does this book cover"). That
+scoping directly drops thematic tagging — labeling each chunk by subject only pays off if a survey-style query
+consumes the tags, and without that consumer they'd sit unused. Finer position metadata (page/sub-heading instead of
+whole-chapter) was considered in the same pass and dropped too, but for an unrelated reason: it's a targeted-query
+feature, not a survey one, and it was already the weakest of the three ingestion ideas reviewed — sharper citations,
+but no new question type unlocked. Era/date metadata is the one survivor of the three; it stays in the Backlog below.
+
+### Summarizing tool
+
+Dropped 2026-10-02. Not a new capability, just a refinement of something `composer` already does: it already
+synthesizes directly from the retrieved chunks today, and a summarizing step would only insert condensation in front
+of that, with a stated risk of losing nuance for an extra LLM call. Era-annotation and quote-extraction both add
+something the system can't currently show (chronology, verbatim grounding); this one doesn't change what the output
+looks like or what question gets answered.
 
 ## v3 — after v2 is complete
 
-### Evaluation and demo packaging
+### 7. Era-annotation
 
-**What:** a small evaluation harness — about 10 questions and two proposed metrics, faithfulness (is each claim
-supported by the retrieved text) and attribution (is each claim credited to the right book) — run before and after the
-v2 changes so the report has numbers. Plus the demo package: a README with a real run and the final v2 architecture
-notebook. **Why:** evidence that the comparison works is more convincing than a description of it, and it is something a
-reviewer can check. **Synergy:** items 4–6 are the changes it measures, which is why it comes after them.
+**Status: done, 2026-10-02.** Built as designed (see `notebooks/ParallelProse/v3-01-graphs.ipynb`), plus one
+correction found while reading the code before building:
+
+- `format_answer` (agent.py) carries no book-identity header at all — the roadmap's original wording was off. The
+  three real surfacing points are `format_context`'s header, and the inline `book_map` strings built separately
+  inside `composer` and `reflect`; `format_answer` stays untouched, since there's nothing book-shaped there to attach
+  an era to.
+- `Book` (catalog.py) gained a single free-text `era: str` field, matching its three existing plain-string fields —
+  nothing downstream compares, sorts, or parses it, so no numeric or BCE/CE-aware type was needed. Augustine is
+  `"397"`, Debord is `"1967"`; a bare number reads as CE, an explicit `"BCE"` suffix marks a BCE date (e.g.
+  Aristotle would be `"340 BCE"`).
+- All three surfacing points now interpolate `CATALOG[corpus_id].era` into their existing header/`book_map` strings.
+- Validated directly: `format_context`'s header renders `"... - Era: 397"` / `"... - Era: 1967"`, and a full graph
+  run on both books completed with no regression (both books still labeled `ok`).
+
+**What:** a new `era`/period field on `Book` in `catalog.py`, surfaced wherever a book's identity is already named to
+the LLM (`format_context`'s header, `composer`'s and `reflect`'s `book_map` strings); no ingestion change needed,
+since era belongs to the book, not the chunk. **Why:** fixes a real correctness risk — comparing Augustine (~400 CE)
+and Debord (1967) with no era marker risks `composer` treating them as contemporaries. **Synergy:** cheapest item in
+v3, done first.
+
+### 8. Quote-extraction
+
+**Status: done, 2026-10-02.** Built as designed (see `notebooks/ParallelProse/v3-01-graphs.ipynb`), plus one
+correction found while reading the code before building:
+
+- The roadmap's original wording named `CorpusComposer`; the actual schema is `CorpusFinding` (agent.py:73-79,
+  nested inside `ComposerAnswer`).
+- `CorpusFinding` gained `quote: str | None = Field(default=None, ...)`, mirroring `narrowed_query`'s own
+  shape (`CorpusCritique`, agent.py:57-60) — meaningful only when `label` isn't `"silent"`, singular rather than a
+  list, matching the roadmap's "an exact excerpt" wording.
+- `composer`'s existing silent-override loop (agent.py:212-217) now also sets `slot.quote = None`, right alongside
+  where it already overwrites `slot.finding` for a silent book.
+- Validated directly against a real run: both books returned a genuine verbatim excerpt backing their finding
+  (Augustine's memory/sight/expectation passage, Debord's "carcass of time" line). The `silent` → `quote = None`
+  path wasn't exercised in that run (neither book landed `silent`), but it's a one-line deterministic assignment
+  mirroring `finding`'s already-validated override from item 6.
+
+**What:** add a verbatim-quote field to `CorpusFinding` (composer's per-corpus finding schema), grounding each
+finding in an exact excerpt instead of paraphrase. **Why:** direct evidence a reviewer can check — same rationale as
+the eval phase itself. **Synergy:** feeds the eval harness's faithfulness check for free.
+
+### 9. App packaging
+
+**Status: done, 2026-10-02.** Built as designed (see `notebooks/ParallelProse/v3-01-graphs.ipynb` for the
+`run_query` destination), plus what the build turned out to need:
+
+- `run_query(query: str) -> ReflectionState` (agent.py:346-365) starts the MCP server lazily, exactly once per
+  process — a module-level `_server_task` flag, checked and set on first call, mirroring this file's own
+  `bridged_tools_by_corpus`/`retrieval_agents_by_corpus` caching idiom (agent.py:28-29) — instead of restarting the
+  server on every call the way the old `run()` did.
+- `run_query` uses `ainvoke`, not `astream`: the goal is the one final state as a return value, not a live per-step
+  print. `run()`'s old `show()`-based printing moved to a thin `demo()` wrapper under `__main__`, which just calls
+  `run_query` and prints the fields it cares about.
+- One real bug caught while placing it: the first attempt landed `run_query` still nested inside
+  `if __name__ == "__main__":` — unreachable from outside the script, the exact problem being fixed. A second,
+  independent attempt added a duplicate definition further down, after `reflection_app` compiled; the second one
+  (correctly placed, module-level) won at import time, and the first was deleted as dead code.
+- Validated directly: `run_query` imported and called from a separate script (no `__main__` involvement) returned a
+  real `ReflectionState` dict with a populated `ComposerAnswer` inside it.
+- `README.md` now carries a real-run write-up (query, agreement, disagreement, each book's finding and quote) from
+  an actual `run_query` call. `notebooks/ParallelProse/v2-04-architecture-final.ipynb` documents the finished v2
+  architecture (sections B–F, one per roadmap item 1–2, 4, 5, 6), each claim anchored to real `agent.py` line
+  numbers, with real (not fabricated) code-cell output — a capstone paired with `v2-01`/`v2-02`'s earlier,
+  pre-build sketches.
+
+**What:** a `run_query(query) -> ReflectionState`-style function that runs the graph once and returns/persists the
+full final state (the old `run()` only printed, returned nothing); a real-run write-up in `README.md`; the final v2
+architecture notebook. **Why:** this is the shared infrastructure both the eval harness and a reviewer-facing demo
+need. **Synergy:** must land before the eval harness, which reuses this run function rather than building a second
+one.
+
+### 10. `Critique` feedback scoping — instruction-only (cheap first try)
+
+After testing v2, we have concluded that the architecture merge to turn v1 into a 2-book capable system, had some design
+choices that weakened it making more a hybrid than a native 2-book system. So, two ways ahead: item 10 is the cheap one,
+and item 11 is the thorough one.
+
+**Status:
+planned.**
+**What:** add an
+explicit
+instruction to `reflect`'s prompt scoping `feedback` to
+the
+cross-book comparison (agreement/disagreement) only, leaving all per-book depth to the existing `label`/`reason` —
+no schema change, no new fields. Measured, not assumed: run it repeatedly on real queries (compound and
+non-compound) and check whether `feedback`'s text ever singles out one book's depth unprompted by the other — a
+sharper test than "does it name a book," since legitimately describing both authors in one comparison sentence is
+not the failure mode. **Why:** `ComposerAnswer` already splits cross-book vs. per-book cleanly (item 6); `Critique`
+never got the same treatment — a holdover from v1's single-book design that `label`/`reason` already outgrew (see
+`project_critique_single_book_debt.md`) — so `feedback`'s free text keeps re-litigating per-book depth that
+`label`/`reason` already covers in a bounded, falsifiable way. Confirmed independent of query complexity: a
+compound query ("how is X experienced, and what shapes it") and its non-compound version showed the same per-book
+nagging rate and content, ruling out query shape as the driver. **Synergy:** the cheapest possible fix — one more
+prompt sentence, the same lever already proven partially effective twice this session (quote-integration,
+query-scope complaints). Its measured leak rate is the direct input to item 11's go/no-go decision.
+
+### 11. `Critique` becomes 2-book native — structural (only if item 10 isn't enough)
+
+**Status: planned, contingent on item 10's measured results.** **What:** only if item 10's measured leak rate
+doesn't justify stopping there: split `reflect`'s one LLM call into two — an unchanged per-book call (`label`/`reason`/
+`narrowed_query`) and a second, context-restricted call that never sees per-book chunks or
+findings, so it structurally cannot comment on per-book depth. Item 10's actual leak examples (if any) calibrate
+this second call's prompt and acceptance test, rather than designing it blind. **Why:** instruction-only scoping (item
+
+10) asks the model to honor a distinction it's never guaranteed to honor — we already have two data points
+    this session of instruction tightening only partially working. Removing the model's *access* to per-book detail
+    during the comparison-level judgment is the only real structural guarantee against the same leak recurring.
+    **Synergy:**
+    directly consumes item 10's findings — doesn't start until item 10 has actually run and been measured;
+    must land before the test suite (item 12) so the suite is written against `Critique`'s fully settled shape, not one
+    about to change again.
+
+### 12. Test suite
+
+**Status: planned.** **What:** a proper `tests/` suite covering the graph's core node logic — `retriever`'s
+skip-on-`ok`/`silent`, `composer`'s silent-override (`finding` + `quote` blanking), `reflect`'s per-book label
+return, `route_after_reflection`'s routing branches — and relocating the ad-hoc `test_retriever`, `test_accumulation`,
+`test_retriever_2` functions currently embedded in `agent.py`'s `__main__` block into that suite (updated to the
+current state shape where still relevant, dropped where superseded). **Why:** today's only "tests" are those three
+stale functions — `test_accumulation` still assumes the flat pre-item-2 state shape (`narrowed_query`/`chunks`/
+`lineage` at the top level, not nested under `corpora`) and would crash if run; none of the three assert anything,
+they just print; and they sit mixed in with live-call demo code in the same `__main__` block (see `CLAUDE.md`,
+"Guard module side effects"). **Synergy:** lands after packaging (item 9) and after `Critique`'s 2-book-native
+shape settles (items 10-11), because `run_query()` and `Critique` are exactly the two things this suite needs to
+test against a shape that's finished changing; also lands before the eval harness (item 13), because that harness
+checks answer *quality*, a different concern from code correctness — it benefits from running against code that's
+already covered, not the other way around.
+
+### 13. Evaluation harness
+
+**Status: planned.** **What:** a LangSmith-hosted golden set (~10 targeted questions against Augustine/Debord,
+including at least one question only one book addresses, to exercise `reflect`'s `"silent"` case), traced
+automatically via LangSmith once the graph is instrumented, scored by two evaluators: faithfulness via
+`ragas`/`deepeval`'s built-in metric, and a hand-built attribution metric (no off-the-shelf equivalent exists for
+crediting a claim to one of two specific corpora). The comparison axis — chunk size vs. retriever preference via
+docstring bias, or both — is deliberately left open, a per-run choice, not part of the harness's own design. **Why:**
+comparing before/after the v2 changes would have a foreseeable outcome (the same reason v1-vs-v2 was
+rejected); comparing configurations on the same version is a genuinely open question, so it's the comparison actually
+worth running. **Synergy:** depends on item 9's run function; the faithfulness claim-decompose-then-judge-each-claim
+pattern and the calibrate-before-trusting-the-judge methodology both carry over from researching a prior, unfinished
+eval attempt in a sibling project, even though no code from it does.
 
 ### Backlog (deferred, not dropped)
 
-- **Summarizing tool** — condense each corpus's retrieved chunks into a compact position before `composer` synthesizes.
-  Costs an extra LLM call and some risk of losing nuance.
-- **Era/context-annotation tool** — surfaces "this passage is from 350 BCE / this one is from 2020" as metadata, so the
-  comparison doesn't flatten two authors from different eras into contemporaneous peers.
-- **Quote-extraction tool** — pulls verbatim supporting text per side to ground the comparison in exact words instead of
-  paraphrase. Costs tokens.
-
-These were deferred deliberately to keep v2 scoped to the changes with the clearest, most concrete payoff — not
-because they're low-value.
+Currently empty — era-annotation and quote-extraction, the only two entries previously here, were promoted into the
+sequenced v3 items above (7 and 8).
 
 ## Out of scope here
 

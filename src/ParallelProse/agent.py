@@ -65,7 +65,8 @@ class Critique(BaseModel):
     needs_revision: bool = Field(
         description="True if the answer has a real gap or error worth fixing"
     )
-    feedback: str = Field(description="What's wrong and what to fix, or why it's fine")
+    feedback: str = Field(
+        description="What's wrong and what to fix, or why it's fine. Each finding already carries its own verbatim quote as evidence — never flag a finding for lacking textual references or ask for a quote to be 'integrated'; that's already done. Critique facts and completeness against the retrieved passages only.")
     corpora_critique: list[CorpusCritique] = Field(
         description="Is exactly one entry for each book in the context, none skipped")
 
@@ -75,15 +76,21 @@ class CorpusFinding(BaseModel):
         description="the id of the book this finding is about, exactly as given in the context")
     finding: str = Field(
         description="What this one book alone asserts about the query, restricted to whatever wasn't already pulled into the top-level agreement/disagreement. Or, if this book's label is 'silent', a direct statement that it doesn't address the query")
+    quote: str | None = Field(default=None,
+                              description="An exact, verbatim excerpt that backs finding. Used only when label is 'miss' or 'ok', leave null if label is 'silent'.")
 
 
 class ComposerAnswer(BaseModel):
     """Agreement Disagreement"""
+
     agreement: str = Field(
         description="Agreement means what both books actually claim in common about the query. A substantive point they both assert — not just a subject both happen to touch on. ")
     disagreement: str = Field(
         description="It's a point where the books' claims conflict, both books make a claim about the same specific point, and the claims contradict. It`s not just a point where their subjects diverge, both books touch the same broad subject but make claims about different facets of it — nothing actually contradicts, because there's no shared point to compare.")
     unique_findings: list[CorpusFinding] = Field(description="one entry per book, none skipped")
+
+
+_server_task: asyncio.Task | None = None
 
 
 # MARK: RETRIEVER
@@ -177,7 +184,7 @@ def format_context(corpora: dict[str, CorpusState]) -> str:
     """This function returns the retrieved chunks as a string, to feed composer prompt. The formatting is: one labeled block per book: a header naming the book, then that book's chunks."""
     blocks = []
     for corpus_id, slot in corpora.items():
-        header = f"corpus_id: {corpus_id} = Book_title: {CATALOG[corpus_id].book_title} - Author: {CATALOG[corpus_id].author}\n"
+        header = f"Corpus_id: {corpus_id} = Book_title: {CATALOG[corpus_id].book_title} - Author: {CATALOG[corpus_id].author} - Era: {CATALOG[corpus_id].era}\n"
         if not slot["chunks"]:
             chunks_to_str = "no passages retrieved"
         else:
@@ -193,8 +200,10 @@ def composer(state: ReflectionState):
     """
     This function composes an answer on how chunks answers the query.
     """
+
     book_map = "\n".join(
-        f"""{corpus_id} = {CATALOG[corpus_id].book_title}, label: {state["corpora"][corpus_id]["label"]}""" for
+        f"""Corpus_id: {corpus_id} = {CATALOG[corpus_id].book_title}, Label: {state["corpora"][corpus_id]["label"]}, Era: {CATALOG[corpus_id].era}"""
+        for
         corpus_id in state["corpora"])
     context = format_context(state["corpora"])  # organize chunks per-book
 
@@ -210,6 +219,7 @@ def composer(state: ReflectionState):
             for slot in structured_answer.unique_findings:
                 if slot.corpus_id == corpus_id:
                     slot.finding = "query content is absent"
+                    slot.quote = None
 
     return {"answer": structured_answer, "iteration": state["iteration"] + 1}
 
@@ -233,10 +243,11 @@ def format_attempts(corpora: dict[str, CorpusState]) -> str:
 
 
 def format_answer(answer: ComposerAnswer) -> str:
-    """This function formats ComposerAnswer as a string to feed reflect`s prompt."""
+    """This function formats ComposerAnswer as a string to feed reflect's prompt."""
     header = f"""Agreement: {answer.agreement}\nDisagreement: {answer.disagreement} """
     body = "\n".join(
-        f"""Corpus_id: {slot.corpus_id} = Finding: {slot.finding}""" for slot in answer.unique_findings)
+        f"""Corpus_id: {slot.corpus_id} = Finding: {slot.finding} (already backed by this verbatim quote: "{slot.quote}")"""
+        for slot in answer.unique_findings)
     return "\n\n".join([header, body])
 
 
@@ -246,7 +257,8 @@ def reflect(state: ReflectionState):
 
     # 1 - This section sets structural information to feed the llm.
     book_map = "\n".join(
-        f"{corpus_id} = {CATALOG[corpus_id].book_title}" for corpus_id in state["corpora"])
+        f"Corpus_id: {corpus_id} = {CATALOG[corpus_id].book_title} - Era: {CATALOG[corpus_id].era}" for corpus_id in
+        state["corpora"])
     attempts = format_attempts(state["corpora"])
     chunks = format_context(state["corpora"])
     answer = format_answer(state['answer'])
@@ -258,7 +270,13 @@ def reflect(state: ReflectionState):
         f"Answer:\n{answer}\n\n"
         f"Retrieved passages per book:\n{chunks}\n\n"
         f"Queries already tried per book:\n{attempts}\n\n"
-        "Critique the answer for factual accuracy and completeness against the retrieved passages.\n"
+        "Critique the answer for factual accuracy against the retrieved passages, and for completeness "
+        "relative to what the query itself asks — not for exhaustiveness relative to the passages. A "
+        "passage almost always contains more than the query asks about; do not flag the answer for "
+        "leaving out something the query does not ask about.\n"
+        "Each finding already includes its own verbatim quote in parentheses — do not treat that as "
+        "missing evidence or ask for quotes to be added or integrated; judge factual accuracy and "
+        "completeness only.\n"
         "Return needs_revision and feedback for the answer as a whole.\n"
         "Then, for each book listed above, add one entry to corpora_critique: corpus_id must be "
         "exactly A or B as given above, plus label, reason, and narrowed_query."
@@ -332,6 +350,29 @@ reflection_graph.add_edge("composer", "reflect")
 
 reflection_app = reflection_graph.compile()
 
+
+async def run_query(query: str) -> ReflectionState:
+    global _server_task
+    if _server_task is None:
+        _server_task = asyncio.create_task(
+            mcp.run_http_async(port=PORT, show_banner=False, log_level="critical")
+        )
+        await asyncio.sleep(1.0)
+
+    initial_state = {
+        "query": query,
+        "answer": "",
+        "needs_revision": False,
+        "feedback": "",
+        "iteration": 0,
+        "corpora": {
+            "A": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None},
+            "B": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None},
+        }
+    }
+    return await reflection_app.ainvoke(initial_state)
+
+
 if __name__ == "__main__":
     # print(reflection_app.get_graph().draw_mermaid())
 
@@ -360,6 +401,13 @@ if __name__ == "__main__":
                     print("\n")
                 print(
                     "\n          _____________________________________________________________________________________________\n")
+
+
+    async def demo():
+        result = await run_query(query="How is time experienced by people, and what shapes that experience?")
+        print(f"""________Query: {result["query"]} >>>""")
+        print(f"""_Answer: {result["answer"]}""")
+        print(f"""_Feedback: {result["feedback"]}""")
 
 
     async def run():
@@ -454,7 +502,8 @@ if __name__ == "__main__":
 
 
     # MARK: CALLERS
-    asyncio.run(run())
+    # asyncio.run(run())
+    asyncio.run(demo())
     # asyncio.run(test_retriever())
     # asyncio.run(test_accumulation())
     # asyncio.run(test_retriever_2())

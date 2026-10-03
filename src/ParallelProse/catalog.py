@@ -9,6 +9,7 @@ DATA_DIR = REPO_ROOT / "data"
 class Book:
     book_title: str
     author: str
+    era: str
     collection_name: str
     file_name: str
 
@@ -24,12 +25,14 @@ CATALOG: dict[str, Book] = {
     "A": Book(
         book_title="The Confessions of Saint Augustine",
         author="Saint Augustine",
+        era="397",
         collection_name="augustine_confessions",
         file_name="The_Confessions_Of_Saint_Augustine-Saint_Augustine.epub"),
     "B":
         Book(
             book_title="The Society of the Spectacle",
             author="Guy Debord",
+            era="1967",
             collection_name="debord_spectacle",
             file_name="The_Society_of_the_Spectacle_(Annotated Edition)-Guy_Debord.pdf")
 }
