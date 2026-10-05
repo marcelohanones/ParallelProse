@@ -1,6 +1,6 @@
 # Brief for Claude web: decomposing a theme into ParallelProse theses and queries
 
-Paste this before asking Claude web to turn a theme you want to investigate into something
+Paste this before asking Claude web to turn the themes you want to investigate into something
 ParallelProse can actually run. Claude web's job is the full decomposition — theme into one or
 more theses, each thesis sliced into queries — not just a single query suggestion.
 Everything below exists because Claude web's instincts come from its own read of the books'
@@ -34,10 +34,8 @@ A two-book comparison system, not a general research assistant. Given one litera
 - **Query** — a single, targeted, non-compound question, one narrow slice of its thesis. Never
   attempts to answer the whole thesis in one shot.
 
-Only the single chosen thesis and the single chosen query, for whichever series is currently
-running, ever get typed into ParallelProse — nothing else in Claude web's output is kept or
-remembered by the system. Every candidate thesis or query not chosen exists only to help you
-decide; it leaves no trace once you move on.
+Every thesis and every query in the file is run. Nothing is chosen by hand: the batch runner
+takes the whole file as the set of series to run, one theme at a time.
 
 ## What makes a thesis usable
 
@@ -75,41 +73,43 @@ decide; it leaves no trace once you move on.
 4. **Wording matters, and ParallelProse's own retry only narrows reactively after a retrieval
    round, within the same framing as the original query.** It can't invent a different entry point
    into a query before the first round ever runs, and has no advance knowledge of either book's own
-   vocabulary. Offer 2-3 phrasings per query that genuinely lean toward *each book's own register*
-   (not interchangeable rephrasings in one neutral voice) — one variant closer to how the modern
-   book itself tends to put things, one closer to the older book's own translated vocabulary.
-   ParallelProse's retrieval is half literal keyword matching, so a variant that only paraphrases in
-   one register gives the wording-sensitive book no real second attempt.
-5. **One book may simply not address it.** If there's real doubt whether *both* books touch what
-   the query is actually asking about (not just whether the wording matches), flag that doubt rather than
-   proposing it as a confident comparison — ParallelProse has no fix for a book that's genuinely
-   silent on a topic; only for a book that's silent *because of wording*.
-6. **An anachronistic or period-specific trigger term needs translating before it's queried, not
+   vocabulary. Phrase each query once, using the words each book itself is likely to use, not one
+   neutral modern voice. ParallelProse's retrieval is half literal keyword matching, so a wording
+   that only paraphrases in the modern register gives the older book no real second attempt.
+5. **An anachronistic or period-specific trigger term needs translating before it's queried, not
    querying literally.** A modern term with no period equivalent (e.g. "social media") will return
    nothing from an older book even if that book addresses the same underlying pattern under a
    different form. Name the *structural role* the term plays first (a venue where many watch one
    curated performance at once, for status or vicarious participation) and phrase the query around
-   that role, in each book's own language, rather than the literal modern term. If no query can be
-   built this way — the structural role itself has no textual anchor in one of the books — say so
-   and leave it for `synthesize` to connect across other bites' findings instead of forcing a query
-   that will only return silence.
+   that role, in each book's own language, rather than the literal modern term.
 
 ## What to hand back
 
-One structured decomposition, shaped like this:
+One document for the whole batch, with every theme in it, shaped like this:
 
 ```
-Theme: <as given>
+Theme 1: <title, as given>
 
-Thesis 1: <one bounded, declarative sentence>
-  Query 1a: <single-themed, targeted query>
-    variants: <2-3 reworded alternatives, optional>
-  Query 1b: ...
+Thesis 1.1: <one bounded, declarative sentence>
+  Query 1.1a: <single-themed, targeted query>
+  Query 1.1b: <...>
 
-Thesis 2 (only if the theme failed the common-throughline test): <...>
-  Query 2a: ...
+Thesis 1.2: <one bounded, declarative sentence>
+  Query 1.2a: <...>
+
+Theme 2: <title, as given>
+
+Thesis 2.1: <...>
+  Query 2.1a: <...>
 ```
 
-Not a flat batch of unrelated ideas — every query traces to one thesis, every thesis traces
-to the theme. If the theme only needed one thesis, say so explicitly rather than manufacturing a
-second one for coverage's sake.
+Rules:
+- Plain text only. No bold, headers, bullets, or code fences.
+- Each theme, thesis, and query is one line.
+- Each theme starts with `Theme N:`. Theme numbers follow the order in the file. The number of themes is not fixed.
+- Each thesis starts with `Thesis N.M:`, where N is its theme's number and M counts its theses within that theme, starting at 1. The label is the thesis's unique ID, so every thesis in the file has its own.
+- Each query starts with `Query N.Ma:`, where N.M is its thesis's label and the letter a, b, c, ... counts its queries within that thesis. Every query label is unique in the file, so `Query 2.1a:` is always the first query of Theme 2, Thesis 1, and never repeats a label used under another thesis.
+- Exactly one query per letter. No alternates or variants.
+- Add a second thesis to a theme only if the theme failed the common-throughline test. If a theme needs only one thesis, write only `Thesis N.1:`.
+
+Not a flat batch of unrelated ideas: every query traces to one thesis, and every thesis traces to its theme.

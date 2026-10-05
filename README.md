@@ -23,6 +23,37 @@ result = asyncio.run(run_query("How is time experienced by people, and what shap
 no printing, no side effects beyond that. The two books currently indexed are Saint Augustine's *Confessions*
 (era `397`) and Guy Debord's *The Society of the Spectacle* (era `1967`); see `catalog.py` to add or swap books.
 
+## Running a theme batch
+
+A batch file holds themes, each with its theses and queries (format in `docs/claude_web_query_brief.md`). Run it from
+the repository root:
+
+```
+.venv/bin/python -m ParallelProse.theme_batches data/theme_batches/<batch file>.md
+```
+
+The run writes a session folder under `data/theme_batches/<project>/<timestamp>/`, named after the start time, and
+prints the path of the consolidated file when it finishes. The session keeps a copy of the batch file as `source.md`.
+
+The batch already writes the consolidated file when it finishes. To rebuild it for an existing session, for example
+after a session folder is edited, run:
+
+```
+.venv/bin/python -m ParallelProse.consolidate data/theme_batches/<project>/<timestamp>
+```
+
+It writes `<timestamp>_synthesis.json` into the session folder, with every thesis's synthesis under its theme. Inside
+Claude Code, `/consolidate-session <session folder>` runs the same command.
+
+To count how many queries are one-sided (one book silent) in the newest session:
+
+```
+.venv/bin/python -m ParallelProse.one_sided "$(ls -td data/theme_batches/<project>/*/ | head -1)"
+```
+
+To count a specific session, pass its folder instead. Pauses of 30 seconds between queries keep the run under the
+per-minute token limit.
+
 ## Example run
 
 Query: *"How is time experienced by people, and what shapes that experience?"*

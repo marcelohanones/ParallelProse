@@ -17,7 +17,7 @@
   validated against item 10's own test) are all done (2026-10-02 through 2026-10-03) — see "v3 — after v2 is
   complete" below.
 - **v4 (in progress, started 2026-10-03)** — a synthesis layer connecting several targeted queries to a stated
-  objective (item 12, committed), then a proper test suite (item 16), then the evaluation harness (item 17). Items
+  thesis (item 12, committed), then a proper test suite (item 16), then a theme parser (item 17), then the evaluation harness (item 18). Items
   13-15 are the retrieval and silent-verdict fixes built after item 12 was committed. The synthesis layer was always
   its own version — a distinct capability layered on top of a finished, tested two-book comparison
   system; the test suite and eval harness moved here from v3 since v3's own completion no longer waits on them, and
@@ -327,26 +327,26 @@ suite is written against `Critique`'s fully settled shape, not one about to chan
 
 ## v4 — after v3 is complete
 
-### 12. Synthesis layer — connect targeted queries to a stated objective
+### 12. Synthesis layer — connect targeted queries to a stated thesis
 
 **Status: in progress, started 2026-10-03.** **What:** a standalone, non-graph function
-(`synthesize(objective, bites) -> Synthesis`) that reads a session log of already-finished `(query,
-ComposerAnswer)` bites plus one fixed objective, and returns a connective narrative plus an
-`uncovered_angle`/`candidate_query` naming what the objective still lacks — a suggestion only, never auto-run;
+(`synthesize(thesis, bites) -> Synthesis`) that reads a session log of already-finished `(query,
+ComposerAnswer)` bites plus one fixed thesis, and returns a connective narrative plus an
+`uncovered_angle`/`candidate_query` naming what the thesis still lacks — a suggestion only, never auto-run;
 the human decides every query, including whether to take the suggestion. A companion `save_bite`/`load_bites`
-pair persists bites to a flat JSON session file (`{"objective": ..., "bites": [...]}`), one objective set once
+pair persists bites to a flat JSON session file (`{"thesis": ..., "bites": [...]}`), one thesis set once
 per series. Paired with a brief for Claude web (`docs/claude_web_query_brief.md`) instructing it to decompose a
-theme into one or more bounded objectives (splitting when a theme fails the common-throughline test — do all of
-one objective's queries plausibly weave into one narrative?) and each objective into single-themed, non-compound
+theme into one or more bounded theses (splitting when a theme fails the common-throughline test — do all of
+one thesis's queries plausibly weave into one narrative?) and each thesis into single-themed, non-compound
 queries. **Why:** `composer`/`reflect` are built and validated around one targeted query at a time (items 4-11);
-bending them to also reason about a broader, cross-query objective risks the same half-adopted-axis bug item
+bending them to also reason about a broader, cross-query thesis risks the same half-adopted-axis bug item
 10/11 just fixed — one node aware of a new concern, the rest of the graph blind to it — and unlike the two-book
-axis, "served the objective" has no falsifiable schema field the way `label`/`reason` do, so a corrupted
-grounding loop would be far harder to catch. Keeping the objective entirely outside the grounding loop, as a
+axis, "served the thesis" has no falsifiable schema field the way `label`/`reason` do, so a corrupted
+grounding loop would be far harder to catch. Keeping the thesis entirely outside the grounding loop, as a
 function that only ever consumes already quote-backed answers, avoids both risks. **Synergy:** manual-first by
 design — automatic chasing (the system deciding to run its own suggested query) is deliberately deferred until
 the manual version proves useful. Kept as its own item within v4 rather than folded into the test suite or eval
-harness (items 16-17): it's a distinct capability layered on top of a finished, tested two-book comparison
+harness (items 16 and 18): it's a distinct capability layered on top of a finished, tested two-book comparison
 system, not a prerequisite for either of those, which cover the graph as it stands today.
 
 **Also in item 12 — `composer` keeps settled findings. Status: done, validated, 2026-10-04.**
@@ -409,7 +409,7 @@ Augustine in the text, so that part is enforced in code. **Validated:** routing 
 run that went `silent` ran `finalize` and got the override; the override was also checked directly with one book
 silent and with both silent. The 12-query sweep run before this change had one `silent` (commodities, Augustine) that
 skipped the override, which is the case this fixes. **Still open:** the `silent` verdicts are inconsistent (commodities
-was `ok` 15 of 15 in an earlier test and `silent` once since), and item 17's labeled set is what can settle that.
+was `ok` 15 of 15 in an earlier test and `silent` once since), and item 18's labeled set is what can settle that.
 
 ### 16. Test suite
 
@@ -426,10 +426,49 @@ they just print; and they sit mixed in with live-call demo code in the same `__m
 "Guard module side effects"). **Synergy:** lands after packaging (item 9), after `Critique`'s 2-book-native
 shape settles (items 10-11), and after the synthesis layer (item 12) and the retrieval and silent-verdict fixes (items 13-15), because `run_query()`, `Critique`, and
 `synthesize()` are exactly the things this suite needs to test against shapes that are finished changing; also
-lands before the eval harness (item 17), because that harness checks answer *quality*, a different concern from
+lands before the eval harness (item 18), because that harness checks answer *quality*, a different concern from
 code correctness — it benefits from running against code that's already covered, not the other way around.
 
-### 17. Evaluation harness
+### 17. Theme batches — one batch file, one run per theme
+
+**Status: done, 2026-10-05.** Parser and runner in `ParallelProse.theme_batches` (offline tests, plus one real run on a one-query file). **What:** `run_theme_batches(batch_file)` reads a Claude web output file (the batch format in
+`docs/claude_web_query_brief.md`: themes, each with its theses and their queries), then runs each theme's queries
+through `run_query`, saves every answer with `save_bite`, and synthesizes each thesis with `synthesize`. Each
+theme is its own folder, and a single file can hold any number of themes. **Why:** the subjectivism sweep needs
+many themes at once, and running them by hand doesn't scale. **Depends on:** item 12 (`save_bite`, `load_bites`,
+`synthesize`).
+
+**Layout** (local only, under `data/`, gitignored):
+
+```
+data/theme_batches/
+└── augustine_debord/                      project: the two books, A then B
+    └── 2026-10-05_1430/                   session: run start time
+        ├── manifest.json                  source file, tryout label, books, timestamps
+        ├── source.md                      copy of the Claude web document
+        └── theme-01_crowds-and-the-gaze/  one folder per theme; slug from the theme title
+            ├── thesis-01.json             one per thesis: theme, thesis, bites, synthesis
+            └── thesis-02.json
+```
+
+Consolidation is a merge, not an LLM step: `consolidate_session(session_dir)` (`ParallelProse.consolidate`) writes
+`<timestamp>_synthesis.json` at the session root, with every thesis's synthesis under its theme. The slash command
+`/consolidate-session <session folder>` (`.claude/commands/`) runs it. Slugs are generated by the system from the theme title (lowercase, accents stripped, spaces to hyphens, capped
+near 40 characters). The synthesis result is stored inside each `thesis-NN.json`, not in a separate folder.
+
+**One-sided counter.** `one_sided_report(session_dir)` (`ParallelProse.one_sided`, run as `python -m ParallelProse.one_sided <session folder>`) counts each query as balanced, one-sided (one book silent, named), or neither, and checks the one-sided share against 20%. It reads the silence marker from the saved findings.
+
+**First sweep (2026-10-05, brief v3, 8 themes, 35 queries).** One-sided: 1 of 35 (2.9%), under the 20%
+threshold, so the brief's current wording is kept. Spot-check: most balanced pairs address the same object
+(looking and desire, pity at a spectacle, memory, before whom one lays oneself open). Two pairs are loose: "why do
+people worship what they have made" (Debord's commodities do not read as worship) and "where can desire come to
+rest" (Debord's sleep image is a stretch). The one-sided query, "how does identification with an imagined life take
+the place of the spectator's own life," is a search miss, not real silence: Augustine's theatre passage on compassion
+for "feigned and scenical passions" (Book III) answers it, but parent, BM25 and ensemble retrieval never return it
+for this wording. Its silent label is wrong as worded, and this is the case that retrieval, not the brief, needs
+to address. Label leniency is still open (item 18).
+
+### 18. Evaluation harness
 
 **Status: planned.** **What:** a LangSmith-hosted golden set (~10 targeted questions against Augustine/Debord,
 including at least one question only one book addresses, to exercise `reflect`'s `"silent"` case), traced

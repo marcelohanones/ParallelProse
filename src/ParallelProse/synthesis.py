@@ -1,11 +1,7 @@
-from ParallelProse.catalog import CATALOG, REPO_ROOT, DATA_DIR
 from ParallelProse.agent import ComposerAnswer, format_answer, llm
 from pathlib import Path
 import json
 from pydantic import BaseModel
-
-SYNTHESIS_PATH = DATA_DIR / "synthesis"
-
 
 def save_bite(path: Path, theme: str, thesis: str, query: str, answer: ComposerAnswer) -> None:
     """Appends one finished bite to the session file at path, creating it with theme/thesis if it doesn't exist yet."""
@@ -91,52 +87,3 @@ def synthesize(theme: str, thesis: str, bites: list[tuple[str, ComposerAnswer]])
     # 3 - call structured output, return directly
     llm_call = llm.with_structured_output(Synthesis)
     return llm_call.invoke(prompt)
-
-
-if __name__ == "__main__":
-    import asyncio
-    from ParallelProse.agent import run_query
-
-    THEME = "Vanity has always existed, but does being watched by an audience change its nature, or only its scale?"
-    THESIS = "Both books describe living to be seen and approved of as a loss of the self, but they disagree about its cause (economic structure vs. disordered will) and about the way out (social transformation vs. inner conversion)."
-    QUERIES: list[str] = [
-        "What happens to people who prefer watching spectacles to acting themselves?",
-        "What does the desire to be admired and praised do to the person who feels it?",
-        "How does a crowd influence the behavior of the people who belong to it?",
-        "What does a person lose of himself when he lives turned toward external things?",
-        "What causes the pursuit of appearance and of other people's approval?",
-        "How does a person free himself from the rule of appearance and of other people's approval?",
-        "What is the difference between what a person is and what he appears to be?"
-    ]
-
-
-    async def run_pauta():
-        SYNTHESIS_PATH.mkdir(parents=True, exist_ok=True)
-        session_file = SYNTHESIS_PATH / "pauta1.json"
-
-        for i, query in enumerate(QUERIES, 1):
-            print(f"=== Running query {i}/{len(QUERIES)}: {query} ===")
-            result = await run_query(query)
-            save_bite(session_file, THEME, THESIS, query, result["answer"])
-            print(f"Agreement: {result['answer'].agreement}")
-            print(f"Disagreement: {result['answer'].disagreement}")
-            for finding in result["answer"].unique_findings:
-                print(f"  {finding.corpus_id}: {finding.finding}")
-            print()
-
-        theme, thesis, bites = load_bites(session_file)
-        result = synthesize(theme, thesis, bites)
-        save_synthesis(session_file, result)
-        print("=== SYNTHESIS ===")
-        for c in result.claims:
-            print(f"- {c.claim}")
-            print(f"  based on: {c.based_on}")
-        if result.uncovered_angle:
-            print(f"Uncovered angle: {result.uncovered_angle.angle}")
-            print(f"  checked bites: {result.uncovered_angle.checked_bites}")
-        else:
-            print("Uncovered angle: None")
-        print(f"Candidate query: {result.candidate_query}")
-
-
-    asyncio.run(run_pauta())
