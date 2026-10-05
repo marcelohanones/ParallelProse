@@ -19,6 +19,7 @@ from langchain_community.query_constructors.chroma import ChromaTranslator
 from langchain_community.retrievers import BM25Retriever
 from langchain_community.vectorstores import Chroma
 from langchain_core.documents import Document
+from langchain_core.runnables import RunnableLambda
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_text_splitters import CharacterTextSplitter
 
@@ -146,10 +147,16 @@ class Retrieval:
         return docs
 
     def make_bm_25_retriever(self):
-        """This function creates a BM25 instance retriever."""
-        return BM25Retriever.from_documents(
-            documents=load_corpus(str(self.source_path)), bm25_params={"k1": 1.5, "b": 0.75}
-        )
+        """Keyword search over the same child chunks as the vector store, returning their parent chunks."""
+        children = self.vector_store.get(include=["documents", "metadatas"])
+        child_docs = [Document(page_content=text, metadata=meta)
+                      for text, meta in zip(children["documents"], children["metadatas"])]
+        bm25 = BM25Retriever.from_documents(documents=child_docs, bm25_params={"k1": 1.5, "b": 0.75})
+        return bm25 | RunnableLambda(self.parents_of)
+
+    def parents_of(self, children: list[Document]) -> list[Document]:
+        ids = list(dict.fromkeys(c.metadata["doc_id"] for c in children))
+        return [p for p in self.doc_store.mget(ids) if p is not None]
 
     def make_ensemble_retriever(self):
         """

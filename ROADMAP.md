@@ -17,10 +17,11 @@
   validated against item 10's own test) are all done (2026-10-02 through 2026-10-03) — see "v3 — after v2 is
   complete" below.
 - **v4 (in progress, started 2026-10-03)** — a synthesis layer connecting several targeted queries to a stated
-  objective (item 12, in progress), then a proper test suite (item 13), then the evaluation harness (item 14).
-  The synthesis layer was always its own version — a distinct capability layered on top of a finished, tested
-  two-book comparison system; the test suite and eval harness moved here from v3 since v3's own completion no
-  longer waits on them, and now land after the synthesis layer so they cover it too. See "v4 — after v3 is
+  objective (item 12, committed), then a proper test suite (item 16), then the evaluation harness (item 17). Items
+  13-15 are the retrieval and silent-verdict fixes built after item 12 was committed. The synthesis layer was always
+  its own version — a distinct capability layered on top of a finished, tested two-book comparison
+  system; the test suite and eval harness moved here from v3 since v3's own completion no longer waits on them, and
+  now land after the synthesis layer so they cover it too. See "v4 — after v3 is
   complete" below.
 - **RAG-Tetris** — a separate future project (comparing code across versions), out of scope here.
 
@@ -321,7 +322,7 @@ is not sufficiently emphasized," "Augustine's discussion... could be elaborated"
 prompt and acceptance test, rather than designing it blind. **Why:** instruction-only scoping (item 10) asked the
 model to honor a distinction it didn't honor even once in 6 tries — removing the model's *access* to per-book
 detail during the comparison-level judgment is the only real structural guarantee against the same leak
-recurring. **Synergy:** directly consumes item 10's findings; must land before the test suite (item 13) so the
+recurring. **Synergy:** directly consumes item 10's findings; must land before the test suite (item 16) so the
 suite is written against `Critique`'s fully settled shape, not one about to change again.
 
 ## v4 — after v3 is complete
@@ -345,7 +346,7 @@ grounding loop would be far harder to catch. Keeping the objective entirely outs
 function that only ever consumes already quote-backed answers, avoids both risks. **Synergy:** manual-first by
 design — automatic chasing (the system deciding to run its own suggested query) is deliberately deferred until
 the manual version proves useful. Kept as its own item within v4 rather than folded into the test suite or eval
-harness (items 13-14): it's a distinct capability layered on top of a finished, tested two-book comparison
+harness (items 16-17): it's a distinct capability layered on top of a finished, tested two-book comparison
 system, not a prerequisite for either of those, which cover the graph as it stands today.
 
 **Also in item 12 — `composer` keeps settled findings. Status: done, validated, 2026-10-04.**
@@ -376,7 +377,41 @@ system, not a prerequisite for either of those, which cover the graph as it stan
   graph ends right away, so the final answer still carries the model's own finding for the silent book (seen in a
   real crowd-query run: Augustine `silent`, final finding still describes him).
 
-### 13. Test suite
+### 13. BM25 searches the same chunks as the vector store
+
+**Status: done, validated, 2026-10-05 (uncommitted at time of writing).** **What:** `make_bm_25_retriever`
+(retrieve.py) indexed `load_corpus` output, one document per chapter, so keyword hits came back as whole chapters, up
+to 90,626 characters. It now indexes the vector store's own 400-character children and maps each hit to its
+4,000-character parent (`parents_of`, via `doc_id` into the docstore), the same unit the semantic tool returns.
+**Why:** one 90k-character chunk put the `reflect` prompt at 226,000 characters (about 56k tokens), which gpt-4o
+rejected on this account and which buried the other book's passages. **Validated:** every BM25 and ensemble result
+is at most 4,000 characters for both books; a keyword probe for "Alypius" now returns the games passage in 4 of 4
+results (it didn't before). **Open:** the index is rebuilt on every call; caching it is a follow-up.
+
+### 14. Passage size: keep 4,000-character parents
+
+**Status: tested, no change, 2026-10-05.** **What:** the same crowd query, answer text and judge, five runs each
+with gpt-4o-mini, with 400-character children in place of 4,000-character parents. **Result:** the parents put the
+games passage in 3 of 4 retrieved chunks and the children in 1 of 4; the label was `ok` 4 of 5 times with either
+size. **Why it matters:** smaller chunks lose the passage at retrieval and gain nothing at judgment, so the parent
+size stays. The passage was retrieved in every round and still judged `miss` or `silent`, so the failure is in
+reading it, not in finding it. Switching to gpt-4o didn't fix that either: it said `ok` 5 of 5, but from a different
+passage.
+
+### 15. A silent verdict reaches the final answer
+
+**Status: done, 2026-10-05.** **What:** `route_after_reflection` sends a `silent` book with no `miss` left to a new
+`finalize` node (`composer` again, then `END`), instead of ending right after `reflect`. `composer` also overwrites
+`agreement` and `disagreement` in code when a book is silent ("does not address the query, so there is no cross-book
+agreement"). **Why:** the silent override only ran when `composer` came after `reflect`, so a `silent` verdict in the
+last round left the model's own finding in the final answer. An instruction-only version of the agreement fix left
+Augustine in the text, so that part is enforced in code. **Validated:** routing checked on 7 cases; a real commodities
+run that went `silent` ran `finalize` and got the override; the override was also checked directly with one book
+silent and with both silent. The 12-query sweep run before this change had one `silent` (commodities, Augustine) that
+skipped the override, which is the case this fixes. **Still open:** the `silent` verdicts are inconsistent (commodities
+was `ok` 15 of 15 in an earlier test and `silent` once since), and item 17's labeled set is what can settle that.
+
+### 16. Test suite
 
 **Status: planned.** **What:** a proper `tests/` suite covering the graph's core node logic — `retriever`'s
 skip-on-`ok`/`silent`, `composer`'s silent-override (`finding` + `quote` blanking), `reflect`'s per-book label
@@ -387,12 +422,12 @@ stale functions — `test_accumulation` still assumes the flat pre-item-2 state 
 `lineage` at the top level, not nested under `corpora`) and would crash if run; none of the three assert anything,
 they just print; and they sit mixed in with live-call demo code in the same `__main__` block (see `CLAUDE.md`,
 "Guard module side effects"). **Synergy:** lands after packaging (item 9), after `Critique`'s 2-book-native
-shape settles (items 10-11), and after the synthesis layer (item 12), because `run_query()`, `Critique`, and
+shape settles (items 10-11), and after the synthesis layer (item 12) and the retrieval and silent-verdict fixes (items 13-15), because `run_query()`, `Critique`, and
 `synthesize()` are exactly the things this suite needs to test against shapes that are finished changing; also
-lands before the eval harness (item 14), because that harness checks answer *quality*, a different concern from
+lands before the eval harness (item 17), because that harness checks answer *quality*, a different concern from
 code correctness — it benefits from running against code that's already covered, not the other way around.
 
-### 14. Evaluation harness
+### 17. Evaluation harness
 
 **Status: planned.** **What:** a LangSmith-hosted golden set (~10 targeted questions against Augustine/Debord,
 including at least one question only one book addresses, to exercise `reflect`'s `"silent"` case), traced

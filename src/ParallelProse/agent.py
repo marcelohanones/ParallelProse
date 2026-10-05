@@ -230,6 +230,7 @@ def composer(state: ReflectionState):
                    f"Write a fresh finding for: {', '.join(fresh)}. "
                    f"These books' findings are already settled — reuse them verbatim, and write "
                    f"agreement/disagreement consistent with them:\n{kept_text}")
+    silent = [corpus_id for corpus_id in state["corpora"] if state["corpora"][corpus_id]["label"] == "silent"]
 
     llm_call = llm.with_structured_output(ComposerAnswer)
     structured_answer = llm_call.invoke(prompt)
@@ -243,6 +244,13 @@ def composer(state: ReflectionState):
                 if slot.corpus_id == corpus_id:
                     slot.finding = "query content is absent"
                     slot.quote = None
+    if len(silent) == len(state["corpora"]):
+        structured_answer.agreement = "Neither book addresses the query."
+        structured_answer.disagreement = "None."
+    elif silent:
+        names = ", ".join(CATALOG[c].book_title for c in silent)
+        structured_answer.agreement = f"{names} does not address the query, so there is no cross-book agreement."
+        structured_answer.disagreement = "None: only one book addresses the query."
 
     return {"answer": structured_answer, "iteration": state["iteration"] + 1}
 
@@ -356,27 +364,32 @@ def reflect(state: ReflectionState):
 def route_after_reflection(state: ReflectionState):
     """This function routes the flow"""
     has_miss = False
+    has_silent = False
     for corpus_id in state["corpora"]:
         if state["corpora"][corpus_id]["label"] == "miss":
             has_miss = True
+        if state["corpora"][corpus_id]["label"] == "silent":
+            has_silent = True
 
-    if state["iteration"] >= MAX_ITERATIONS:
-        print("END - MAX_ITERATIONS reached")
-        return END
-    elif has_miss:
+    if has_miss and state["iteration"] < MAX_ITERATIONS:
         return "retriever"
-    else:
-        return END
+    elif has_silent:
+        return "finalize"
+    elif has_miss:
+        print("END - MAX_ITERATIONS reached")
+    return END
 
 
 reflection_graph = StateGraph(ReflectionState)
 reflection_graph.add_node("retriever", retriever)
 reflection_graph.add_node("composer", composer)
 reflection_graph.add_node("reflect", reflect)
+reflection_graph.add_node("finalize", composer)
 reflection_graph.add_conditional_edges("reflect", route_after_reflection)
 reflection_graph.add_edge(START, "retriever")
 reflection_graph.add_edge("retriever", "composer")
 reflection_graph.add_edge("composer", "reflect")
+reflection_graph.add_edge("finalize", END)
 
 reflection_app = reflection_graph.compile()
 
@@ -412,7 +425,7 @@ if __name__ == "__main__":
             if node == "retriever":
                 for corpus_id in update["corpora"]:
                     print(f"""_Chunks: {corpus_id} -  {len(update["corpora"][corpus_id]["chunks"])} items""")
-            if node == "composer":
+            if node in ("composer", "finalize"):
                 print(f"""_Agreement: {update["answer"].agreement[:width]}""")
                 print(f"""_Disagreement: {update["answer"].disagreement[:width]}\n""")
                 for slot in update["answer"].unique_findings:
