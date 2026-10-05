@@ -348,6 +348,34 @@ the manual version proves useful. Kept as its own item within v4 rather than fol
 harness (items 13-14): it's a distinct capability layered on top of a finished, tested two-book comparison
 system, not a prerequisite for either of those, which cover the graph as it stands today.
 
+**Also in item 12 — `composer` keeps settled findings. Status: done, validated, 2026-10-04.**
+
+- **What:** in a retry round, a book whose `label` is still `"ok"` was skipped by `retriever` (same chunks), so
+  `composer` now keeps that book's previous `finding`/`quote` instead of re-sampling them: the kept findings go into
+  the prompt (so `agreement`/`disagreement` stay consistent with them), and are re-imposed in code after the LLM
+  call — the same "prompt asks, code guarantees" shape as the existing silent override. A book with `label` `None`
+  (round 1) or `"miss"` (new chunks) still gets a fresh finding. No state, graph, `reflect` or `synthesis.py`
+  change.
+- **Why:** measured, not assumed. `needs_revision` stays `False` in practice, so every retry round reran
+  `composer`'s first-round prompt at temperature 0.5 with no memory of the previous answer. A controlled
+  recomposition of 12 round-1 states (chunks unchanged) gave a different quoted passage for 9 of 23 findings and a
+  changed claim for ~8 of 23 — some clearly worse (e.g. Augustine's stated cause, sin, dropped from "what causes
+  the pursuit of approval?"). One real run showed the same: Debord `ok`, byte-identical chunks, quote swapped to an
+  off-topic line in round 2. This came out of evaluating (and rejecting, on the same measurements) a per-book
+  subgraph restructure: the drift was real, but caused by sampling, not by the two-book design.
+- **Bug caught during the build:** the first prompt wording listed only the settled book, and the model read it as
+  the full list — it dropped the other book from `unique_findings` in 2 of 6 runs (baseline: 0 of 6). Fixed by
+  stating that `unique_findings` must hold one entry per book and naming which books need a fresh finding: 10 of
+  10 runs complete afterwards.
+- **Validated:** the same controlled test now keeps `finding` and `quote` identical for 23 of 23 `ok` books (was 14
+  of 23 identical quotes), 0 missing entries, and the rewritten `agreement` text stays consistent with the kept
+  findings. Three real end-to-end runs: the crowd query reached a retry round and Debord's finding/quote stayed
+  identical; single-round runs unaffected.
+- **Open (pre-existing, not caused by this change):** the silent override only fires if `composer` runs *after*
+  `reflect` labels a book `"silent"`. When the last `reflect` labels one book `silent` and no book `miss`, the
+  graph ends right away, so the final answer still carries the model's own finding for the silent book (seen in a
+  real crowd-query run: Augustine `silent`, final finding still describes him).
+
 ### 13. Test suite
 
 **Status: planned.** **What:** a proper `tests/` suite covering the graph's core node logic — `retriever`'s

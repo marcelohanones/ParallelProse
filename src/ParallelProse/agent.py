@@ -210,13 +210,33 @@ def composer(state: ReflectionState):
         corpus_id in state["corpora"])
     context = format_context(state["corpora"])  # organize chunks per-book
 
+    # an "ok" book was skipped by retriever this round: same chunks, so its finding is settled.
+    kept = {}
+    if state["answer"]:
+        for slot in state["answer"].unique_findings:
+            if state["corpora"][slot.corpus_id]["label"] == "ok":
+                kept[slot.corpus_id] = slot
+
     if state["needs_revision"]:
         prompt = f"Given this context {context}, the query {state['query']}, the previous answer{state['answer']}, the book mapping {book_map}, critique to address this feedback {state['feedback']}"
     else:
         prompt = f"Given this context {context}, write a short (3-4 sentence) factual note on: {state['query']}"
+    if kept:
+        kept_text = "\n".join(
+            f'Corpus_id: {corpus_id} = Finding: {slot.finding} (quote: "{slot.quote}")'
+            for corpus_id, slot in kept.items())
+        fresh = [corpus_id for corpus_id in state["corpora"] if corpus_id not in kept]
+        prompt += (f"\n\nunique_findings must still hold exactly one entry per book: {', '.join(state['corpora'])}. "
+                   f"Write a fresh finding for: {', '.join(fresh)}. "
+                   f"These books' findings are already settled — reuse them verbatim, and write "
+                   f"agreement/disagreement consistent with them:\n{kept_text}")
 
     llm_call = llm.with_structured_output(ComposerAnswer)
     structured_answer = llm_call.invoke(prompt)
+    for slot in structured_answer.unique_findings:
+        if slot.corpus_id in kept:
+            slot.finding = kept[slot.corpus_id].finding
+            slot.quote = kept[slot.corpus_id].quote
     for corpus_id in state["corpora"]:
         if state["corpora"][corpus_id]["label"] == "silent":
             for slot in structured_answer.unique_findings:
