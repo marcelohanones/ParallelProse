@@ -119,34 +119,3 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 
-
-    async def test_retriever():
-        server_task = asyncio.create_task(mcp.run_http_async(port=PORT, show_banner=False, log_level="critical"))
-        await asyncio.sleep(1.0)
-        async with http_client as client:
-            pr = await client.call_tool("call_parent_retriever", {
-                "query": "in what year this book was written?",
-                "corpus": "B"
-            })
-            print(f""">>> Parent_retriever: {pr.data[0][:200]}""")
-
-            pr = await client.call_tool("call_search_self_query", {
-                "query": "in what year this book was written?",
-                "corpus": "B",
-                "description": "A chunk of text from the book Confessions writen by Saint Augustine"
-            })
-            print(f""">>> Search_self: {pr.data[0][:200]}""")
-
-            bm = await client.call_tool("call_bm_25_retriever", {
-                "query": "in what year this book was written?",
-                "corpus": "B"
-            })
-            print(f""">>> BM_25: {bm.data[0][:200]}""")
-
-            en = await client.call_tool("call_ensemble_retriever", {
-                "query": "in what year this book was written?",
-                "corpus": "B"
-            })
-            print(f""">>> Ensemble_retriever: {en.data[0][:200]}""")
-
-    # asyncio.run(test_retriever())

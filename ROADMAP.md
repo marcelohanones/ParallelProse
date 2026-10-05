@@ -413,7 +413,9 @@ was `ok` 15 of 15 in an earlier test and `silent` once since), and item 17's lab
 
 ### 16. Test suite
 
-**Status: planned.** **What:** a proper `tests/` suite covering the graph's core node logic — `retriever`'s
+**Status: done, 2026-10-05.** Suite in `tests/`: 14 offline tests (routing, retriever skip and miss-retry, composer's kept-finding and silent override, reflect's per-book return) plus 2 BM25 checks on the real corpora; `pytest` added as a dev dependency. A mutation check (breaking the routing and the silent override) failed 5 tests. The old `test_retriever`, `test_accumulation` and `test_retriever_2` are gone: the first two were superseded, and `test_retriever_2` needs the network, so its live-quality check belongs with item 17.
+
+**What:** a proper `tests/` suite covering the graph's core node logic — `retriever`'s
 skip-on-`ok`/`silent`, `composer`'s silent-override (`finding` + `quote` blanking), `reflect`'s per-book label
 return, `route_after_reflection`'s routing branches — and relocating the ad-hoc `test_retriever`, `test_accumulation`,
 `test_retriever_2` functions currently embedded in `agent.py`'s `__main__` block into that suite (updated to the
