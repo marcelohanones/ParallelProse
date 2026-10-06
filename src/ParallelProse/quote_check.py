@@ -1,6 +1,8 @@
 import difflib
+import math
 import re
 import unicodedata
+from collections import Counter
 
 from ParallelProse.agent import ComposerAnswer
 
@@ -96,6 +98,60 @@ def verify_quotes(answer: ComposerAnswer, corpora: dict, query: str) -> dict[str
             entry.update(similarity=round(similarity, 3), nearest=raw, differences=_differences(quote_form, form))
         details[cid] = entry
     return details
+
+
+MIN_SHARED_TERMS = 2  # a replacement must share at least this many content terms with the query
+STOPWORDS = frozenset("""a an and are as at be been but by can could did do does for from had has have he her his how i if in
+into is it its me my no nor not of on or our she so than that the their them then there these they this those to too us
+was we were what when where which who whom why will with would you your""".split())
+
+
+def _content_terms(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]+", normalize_text(text)) if len(w) > 2 and w not in STOPWORDS}
+
+
+def select_quotes(answer: ComposerAnswer, corpora: dict, query: str,
+                  books: set[str] | None = None) -> tuple[ComposerAnswer, dict[str, dict]]:
+    """Per book, the composer's quote is replaced by the sentence of that book's retrieved chunks that shares the most query terms,
+    when that sentence scores strictly higher. A term counts for more the rarer it is among the book's sentences. A quote that echoes
+    the query always loses its place, and the echo is never replaced by the query itself. Returns the adjusted answer and, per book,
+    whether a quote was replaced, with the composer's original quote as `llm_quote` and both scores. Only the books in `books`
+    are considered (None means all): a twin query's non-target book keeps the composer's quote."""
+    query_terms = _content_terms(query)
+    query_form = match_form(query, is_quote=True)
+    selection, findings = {}, []
+    for finding in answer.unique_findings:
+        cid = finding.corpus_id
+        if finding.quote is None or (books is not None and cid not in books):
+            selection[cid] = {"replaced": False}
+            findings.append(finding)
+            continue
+        sentences = [(s, _content_terms(s)) for chunk in corpora[cid]["chunks"]
+                     for s in re.split(r"(?<=[.!?;:])\s+", re.sub(r"\s+", " ", chunk).strip()) if s.strip()]
+        document_frequency = Counter(term for _, terms in sentences for term in terms)
+        count = len(sentences)
+
+        def score(terms: set[str]) -> float:
+            return sum(math.log((count + 1) / (document_frequency[t] + 1)) + 1 for t in query_terms if t in terms)
+
+        if match_form(finding.quote, is_quote=True) == query_form:
+            quote_score = -1.0  # an echo of the query loses to any real sentence
+        else:
+            quote_score = score(_content_terms(finding.quote))
+        best_sentence, best_score = "", 0.0
+        for sentence, terms in sentences:
+            if match_form(sentence, is_quote=True) == query_form or len(query_terms & terms) < MIN_SHARED_TERMS:
+                continue  # one shared word, even a rare one, is not enough to stand in for an answer
+            if score(terms) > best_score:
+                best_sentence, best_score = sentence, score(terms)
+        if best_sentence and best_score > quote_score:
+            selection[cid] = {"replaced": True, "llm_quote": finding.quote,
+                              "score": round(best_score, 3), "llm_score": round(quote_score, 3)}
+            findings.append(finding.model_copy(update={"quote": best_sentence}))
+        else:
+            selection[cid] = {"replaced": False, "score": round(quote_score, 3)}
+            findings.append(finding)
+    return answer.model_copy(update={"unique_findings": findings}), selection
 
 
 def verified_flags(details: dict[str, dict]) -> dict[str, bool | None]:

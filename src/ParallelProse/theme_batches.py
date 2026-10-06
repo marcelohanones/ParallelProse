@@ -10,7 +10,7 @@ from pathlib import Path
 from ParallelProse.agent import ComposerAnswer, run_query
 from ParallelProse.catalog import CATALOG, DATA_DIR
 from ParallelProse.consolidate_synthesis import consolidate_synthesis_file
-from ParallelProse.quote_check import verified_flags, verify_quotes
+from ParallelProse.quote_check import select_quotes, verified_flags, verify_quotes
 from ParallelProse.synthesis import (UnknownBiteLabelError, load_bites, save_bite, save_synthesis,
                                      save_synthesis_error, synthesize)
 
@@ -113,8 +113,11 @@ async def run_theme_batches(batch_file: Path) -> Path:
                     await asyncio.sleep(QUERY_PAUSE_SECONDS)
                 first_query = False
                 result = await run_query(query)
-                quote_details = verify_quotes(result["answer"], result["corpora"], query)
-                save_bite(path, theme.title, thesis.text, query, result["answer"], extra={
+                answer, quote_selection = select_quotes(result["answer"], result["corpora"], query,
+                                                        books={side} if side else None)
+                quote_details = verify_quotes(answer, result["corpora"], query)
+                save_bite(path, theme.title, thesis.text, query, answer, extra={
+                    "quote_selection": quote_selection,
                     "side_is_target": side_is_target(result["answer"], side),
                     "verified": verified_flags(quote_details),
                     "verification": quote_details,

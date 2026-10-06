@@ -17,7 +17,7 @@
   validated against item 10's own test) are all done (2026-10-02 through 2026-10-03) — see "v3 — after v2 is
   complete" below.
 - **v4 (in progress, started 2026-10-03)** — a synthesis layer connecting several targeted queries to a stated
-  thesis (item 12, committed), then a proper test suite (item 16), then a theme parser (item 17), then the evaluation harness (item 29). Items
+  thesis (item 12, committed), then a proper test suite (item 16), then a theme parser (item 17), then the evaluation harness (item 30). Items
   13-15 are the retrieval and silent-verdict fixes built after item 12 was committed. The synthesis layer was always
   its own version — a distinct capability layered on top of a finished, tested two-book comparison
   system; the test suite and eval harness moved here from v3 since v3's own completion no longer waits on them, and
@@ -346,7 +346,7 @@ grounding loop would be far harder to catch. Keeping the thesis entirely outside
 function that only ever consumes already quote-backed answers, avoids both risks. **Synergy:** manual-first by
 design — automatic chasing (the system deciding to run its own suggested query) is deliberately deferred until
 the manual version proves useful. Kept as its own item within v4 rather than folded into the test suite or eval
-harness (items 16 and 29): it's a distinct capability layered on top of a finished, tested two-book comparison
+harness (items 16 and 30): it's a distinct capability layered on top of a finished, tested two-book comparison
 system, not a prerequisite for either of those, which cover the graph as it stands today.
 
 **Also in item 12 — `composer` keeps settled findings. Status: done, validated, 2026-10-04.**
@@ -409,7 +409,7 @@ Augustine in the text, so that part is enforced in code. **Validated:** routing 
 run that went `silent` ran `finalize` and got the override; the override was also checked directly with one book
 silent and with both silent. The 12-query sweep run before this change had one `silent` (commodities, Augustine) that
 skipped the override, which is the case this fixes. **Still open:** the `silent` verdicts are inconsistent (commodities
-was `ok` 15 of 15 in an earlier test and `silent` once since), and item 29's labeled set is what can settle that.
+was `ok` 15 of 15 in an earlier test and `silent` once since), and item 30's labeled set is what can settle that.
 
 ### 16. Test suite
 
@@ -426,7 +426,7 @@ they just print; and they sit mixed in with live-call demo code in the same `__m
 "Guard module side effects"). **Synergy:** lands after packaging (item 9), after `Critique`'s 2-book-native
 shape settles (items 10-11), and after the synthesis layer (item 12) and the retrieval and silent-verdict fixes (items 13-15), because `run_query()`, `Critique`, and
 `synthesize()` are exactly the things this suite needs to test against shapes that are finished changing; also
-lands before the eval harness (item 29), because that harness checks answer *quality*, a different concern from
+lands before the eval harness (item 30), because that harness checks answer *quality*, a different concern from
 code correctness — it benefits from running against code that's already covered, not the other way around.
 
 ### 17. Theme batches — one batch file, one run per theme
@@ -466,7 +466,7 @@ rest" (Debord's sleep image is a stretch). The one-sided query, "how does identi
 the place of the spectator's own life," is a search miss, not real silence: Augustine's theatre passage on compassion
 for "feigned and scenical passions" (Book III) answers it, but parent, BM25 and ensemble retrieval never return it
 for this wording. Its silent label is wrong as worded, and this is the case that retrieval, not the brief, needs
-to address. Label leniency is still open (item 29).
+to address. Label leniency is still open (item 30).
 
 ### 18. Thesis consolidator — one flat file per session
 
@@ -598,7 +598,26 @@ passages. Quote selection still picks a neighbouring sentence, and an echoed quo
 earlier indexes are in `data/_backup_before_debord_reindex/` and `data/_backup_before_desplit/`. Bites from v9 and earlier
 were verified against the text they were produced with.
 
-### 29. Evaluation harness
+### 29. Quote selection: the sentence that shares the query's terms replaces the composer's neighbour
+
+**Status: done, 2026-10-06 (uncommitted).** **What:** `select_quotes` (`quote_check.py`) runs in `run_theme_batches` before
+verification. For each target book (the tagged side of a twin, or both books of an untagged query), the composer's quote
+is replaced by the sentence of that book's retrieved chunks that shares the most query content terms, when that sentence
+scores strictly higher. A term weighs more the rarer it is among the book's sentences. A replacement needs at least two
+shared content terms (`MIN_SHARED_TERMS`). A quote that echoes the query scores lowest and is replaced by a real sentence,
+never by the query. The composer's quote stays in the bite as `quote_selection.llm_quote`. The finding is not rewritten.
+**Why:** D1. The retriever found the right passage, and the composer quoted a neighbouring sentence (v5 2.1a, v6 2.1a and
+4.1a, v7 1.1a, v8 3.1c) or echoed the query (v7 2.1a, v9 2.1a, 3.1c and 5.1a). **Validated:** 56 offline tests
+(`tests/test_quote_selection.py`). Replayed on the 15 v9 queries against the book paragraphs, with no LLM call: 5 quotes
+replaced, all on target books, and verified quotes rose from 14 to 17. Examples: "Yet alone I had not done it:" (the echo
+in 2.1a), "And behold, Thou wert within…", the full "dishes wherein" sentence, and the Triers and Emperor sentence. A first
+version without the two-term minimum replaced a Debord quote on an Augustine query with an unrelated sentence, and the
+non-target gate was added for that reason. **Open:** the rule is lexical, so it can pick a sentence that shares only
+two generic terms; "For this queen of colours…" (replacing a colours passage) is plausible but not checked against the
+book. The finding text is not rewritten, so it can still describe the composer's quote (D3). Bites from before this change
+have no `quote_selection` and were not re-selected.
+
+### 30. Evaluation harness
 
 **Status: planned.** **What:** a LangSmith-hosted golden set (~10 targeted questions against Augustine/Debord,
 including at least one question only one book addresses, to exercise `reflect`'s `"silent"` case), traced
