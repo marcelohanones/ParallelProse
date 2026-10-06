@@ -30,6 +30,13 @@ def answer(text):
     ])
 
 
+def corpora_for(chunk_a="qa", chunk_b="qb"):
+    return {
+        "A": {"chunks": [f"some text {chunk_a} more text"], "label": "ok", "reason": "fine", "lineage": []},
+        "B": {"chunks": [f"other text {chunk_b} more text"], "label": "ok", "reason": "fine", "lineage": []},
+    }
+
+
 def test_parse_batch_reads_themes_theses_and_queries():
     themes = tb.parse_batch(BATCH)
 
@@ -41,10 +48,19 @@ def test_parse_batch_reads_themes_theses_and_queries():
         "Both books treat approval as a loss of self.",
     ]
     assert first.theses[0].queries == [
-        ("1.1a", "How does a crowd influence the behavior of the people who belong to it?"),
-        ("1.1b", "What does a person lose of himself in a crowd?"),
+        ("1.1a", "How does a crowd influence the behavior of the people who belong to it?", None),
+        ("1.1b", "What does a person lose of himself in a crowd?", None),
     ]
-    assert first.theses[1].queries == [("1.2a", "What causes the pursuit of approval?")]
+    assert first.theses[1].queries == [("1.2a", "What causes the pursuit of approval?", None)]
+
+
+def test_parse_batch_reads_side_tag_outside_the_query_text():
+    themes = tb.parse_batch("Theme 1: T\nThesis 1.1: x\n  Query 1.1a[A]: a friend in a garden\n  Query 1.1b[B]: emancipation with others\n")
+
+    assert themes[0].theses[0].queries == [
+        ("1.1a", "a friend in a garden", "A"),
+        ("1.1b", "emancipation with others", "B"),
+    ]
 
 
 @pytest.mark.parametrize("bad, message", [
@@ -54,10 +70,72 @@ def test_parse_batch_reads_themes_theses_and_queries():
     ("Theme 1: T\nThesis 1.1: x\n  Query 2.1a: q\n", "sits under thesis 1.1"),
     ("Theme 1: T\nThesis 1.1: x\n  Query 1.2a: q\n", "sits under thesis 1.1"),
     ("Theme 1: T\nThesis 1.1: x\nvariants: stray\n", "not a theme, thesis or query"),
+    ("Theme 1: T\nThesis 1.1: x\n  Query 1.1a[Z]: q\n", "unknown book \\[Z\\]"),
 ])
 def test_parse_batch_rejects_malformed_lines(bad, message):
     with pytest.raises(ValueError, match=message):
         tb.parse_batch(bad)
+
+
+def test_verify_quotes_checks_each_quote_against_its_own_books_chunks():
+    corpora = corpora_for(chunk_a="the  Quote\nspans", chunk_b="unrelated")
+    checked = tb.verify_quotes(ComposerAnswer(agreement="", disagreement="", unique_findings=[
+        CorpusFinding(corpus_id="A", finding="a", quote="the quote spans"),
+        CorpusFinding(corpus_id="B", finding="b", quote="qb"),
+    ]), corpora)
+
+    assert checked == {"A": True, "B": False}
+
+
+def test_verify_quotes_is_none_for_a_book_without_a_quote():
+    checked = tb.verify_quotes(ComposerAnswer(agreement="", disagreement="", unique_findings=[
+        CorpusFinding(corpus_id="A", finding="query content is absent", quote=None),
+    ]), corpora_for())
+
+    assert checked == {"A": None}
+
+
+def test_restrict_to_side_keeps_one_book_and_blanks_the_shared_fields():
+    restricted = tb.restrict_to_side(answer("shared"), "B")
+
+    assert restricted.agreement == "" and restricted.disagreement == ""
+    assert [f.corpus_id for f in restricted.unique_findings] == ["B"]
+
+
+def test_run_theme_batches_hands_synthesis_only_the_tagged_side(tmp_path, monkeypatch):
+    monkeypatch.setattr(tb, "BATCHES_PATH", tmp_path)
+    monkeypatch.setattr(tb, "QUERY_PAUSE_SECONDS", 0)
+
+    async def fake_run_query(query):
+        return {"answer": answer(f"agree on {query[:10]}"), "corpora": corpora_for()}
+
+    seen = {}
+
+    def fake_synthesize(theme, thesis, bites):
+        seen[thesis] = bites
+        return Synthesis(claims=[], uncovered_angle=None, candidate_query=None)
+
+    monkeypatch.setattr(tb, "run_query", fake_run_query)
+    monkeypatch.setattr(tb, "synthesize", fake_synthesize)
+    batch_file = tmp_path / "themes.md"
+    batch_file.write_text("Theme 1: Twins\n\nThesis 1.1: Both books treat a friend as a way out.\n"
+                          "  Query 1.1a[A]: a friend in a garden\n"
+                          "  Query 1.1b: a shared query\n")
+
+    asyncio.run(tb.run_theme_batches(batch_file))
+
+    bites = seen["Both books treat a friend as a way out."]
+    tagged, shared = bites[0][1], bites[1][1]
+    assert [f.corpus_id for f in tagged.unique_findings] == ["A"]
+    assert tagged.agreement == ""
+    assert [f.corpus_id for f in shared.unique_findings] == ["A", "B"]
+    assert shared.agreement.startswith("agree on")
+
+    stored = json.loads(next(tmp_path.glob("augustine_debord/*/theme-01*/thesis-01.json")).read_text())
+    tagged_bite, shared_bite = stored["bites"]
+    assert {f["corpus_id"] for f in tagged_bite["answer"]["unique_findings"]} == {"A", "B"}
+    assert tagged_bite["side_is_target"] == {"A": True, "B": False}
+    assert shared_bite["side_is_target"] == {"A": None, "B": None}
 
 
 def test_slugify_is_ascii_hyphenated_and_capped():
@@ -74,7 +152,7 @@ def test_run_theme_batches_builds_the_session_tree(tmp_path, monkeypatch):
 
     async def fake_run_query(query):
         queries_run.append(query)
-        return {"answer": answer(f"agree on {query[:10]}")}
+        return {"answer": answer(f"agree on {query[:10]}"), "corpora": corpora_for()}
 
     monkeypatch.setattr(tb, "run_query", fake_run_query)
     monkeypatch.setattr(tb, "synthesize", lambda theme, thesis, bites: Synthesis(
@@ -101,6 +179,8 @@ def test_run_theme_batches_builds_the_session_tree(tmp_path, monkeypatch):
         "How does a crowd influence the behavior of the people who belong to it?",
         "What does a person lose of himself in a crowd?",
     ]
+    assert first_thesis["bites"][0]["verified"] == {"A": True, "B": True}
+    assert first_thesis["bites"][0]["retrieval"]["A"] == {"label": "ok", "reason": "fine", "lineage": []}
 
     consolidated = json.loads(out.read_text())
     assert [t["folder"] for t in consolidated["themes"]] == theme_dirs

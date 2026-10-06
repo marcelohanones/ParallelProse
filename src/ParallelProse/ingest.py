@@ -1,12 +1,12 @@
 from dotenv import load_dotenv
 
 load_dotenv()
+import re
 import warnings
 from pathlib import Path
 
 from bs4 import BeautifulSoup
 from ebooklib import ITEM_DOCUMENT, epub
-from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.documents import Document
 from pypdf import PdfReader
 
@@ -27,10 +27,22 @@ def load_corpus(path: str) -> list[Document]:
 
 
 # MARK: PDF BRANCH
+def _pdf_pages(pdf_path: str) -> list[Document]:
+    """One Document per page. Layout extraction keeps words whole where plain extraction splits them (e.g. 'commod ity'); pypdf's layout mode raises IndexError on a few pages of this PDF, so those fall back to plain extraction. Runs of spaces are collapsed."""
+    pages = []
+    for page in PdfReader(pdf_path).pages:
+        try:
+            text = page.extract_text(extraction_mode="layout") or ""
+        except IndexError:
+            text = page.extract_text() or ""
+        pages.append(Document(page_content=re.sub(r"[ \t]+", " ", text)))
+    return pages
+
+
 def _load_pdf(pdf_path: str) -> list[Document]:
     """This function loads the pdf file and concatenates the content of each chapter keeping the metadata. It returns a list of Documents(page_content=str, metadata=chapter)
     """
-    pdf_docs = PyPDFLoader(str(pdf_path)).load()
+    pdf_docs = _pdf_pages(pdf_path)
 
     reader = PdfReader(pdf_path)
     outline = reader.outline  # flat list of Destination objects (39 entries here)

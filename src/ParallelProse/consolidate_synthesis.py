@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 
-def consolidate_session(session_dir: Path) -> Path:
+def consolidate_synthesis_file(session_dir: Path) -> Path:
     themes = []
     for theme_dir in sorted(p for p in session_dir.iterdir() if p.is_dir() and p.name.startswith("theme-")):
         theses = []
@@ -27,4 +27,4 @@ def consolidate_session(session_dir: Path) -> Path:
 
 
 if __name__ == "__main__":
-    print(consolidate_session(Path(sys.argv[1])))
+    print(consolidate_synthesis_file(Path(sys.argv[1])))

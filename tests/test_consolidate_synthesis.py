@@ -1,6 +1,6 @@
 import json
 
-from ParallelProse.consolidate import consolidate_session
+from ParallelProse.consolidate_synthesis import consolidate_synthesis_file
 
 
 def write_thesis(path, theme, thesis, synthesis):
@@ -18,7 +18,7 @@ def test_consolidate_merges_every_thesis_synthesis_under_its_theme(tmp_path):
     write_thesis(session / "theme-01_first" / "thesis-02.json", "First", "t1b", None)
     (session / "manifest.json").write_text(json.dumps({"tryout": "bundle-a"}))
 
-    out = consolidate_session(session)
+    out = consolidate_synthesis_file(session)
 
     assert out == session / "2026-10-05_1430_synthesis.json"
     data = json.loads(out.read_text())
@@ -37,7 +37,7 @@ def test_consolidate_without_manifest_writes_null(tmp_path):
     session = tmp_path / "2026-10-05_1500"
     write_thesis(session / "theme-01_only" / "thesis-01.json", "Only", "t", {"claims": []})
 
-    data = json.loads(consolidate_session(session).read_text())
+    data = json.loads(consolidate_synthesis_file(session).read_text())
 
     assert data["manifest"] is None
     assert len(data["themes"]) == 1

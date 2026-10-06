@@ -3,13 +3,13 @@ from pathlib import Path
 import json
 from pydantic import BaseModel
 
-def save_bite(path: Path, theme: str, thesis: str, query: str, answer: ComposerAnswer) -> None:
-    """Appends one finished bite to the session file at path, creating it with theme/thesis if it doesn't exist yet."""
+def save_bite(path: Path, theme: str, thesis: str, query: str, answer: ComposerAnswer, extra: dict | None = None) -> None:
+    """Appends one finished bite to the session file at path, creating it with theme/thesis if it doesn't exist yet. `extra` is stored beside the answer, never inside it."""
     if not path.exists():
         session = {"theme": theme, "thesis": thesis, "bites": []}
     else:
         session = json.loads(path.read_text())
-    session["bites"].append({"query": query, "answer": answer.model_dump()})
+    session["bites"].append({"query": query, "answer": answer.model_dump(), **(extra or {})})
     path.write_text(json.dumps(session, indent=2))
 
 

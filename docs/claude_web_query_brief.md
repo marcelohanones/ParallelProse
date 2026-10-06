@@ -74,14 +74,66 @@ takes the whole file as the set of series to run, one theme at a time.
    round, within the same framing as the original query.** It can't invent a different entry point
    into a query before the first round ever runs, and has no advance knowledge of either book's own
    vocabulary. Phrase each query once, using the words each book itself is likely to use, not one
-   neutral modern voice. ParallelProse's retrieval is half literal keyword matching, so a wording
-   that only paraphrases in the modern register gives the older book no real second attempt.
+   neutral modern voice — or, when one book's vocabulary is the only one that fits, as a twin pair
+   (below). ParallelProse's retrieval is half literal keyword matching, so a wording that only
+   paraphrases in the modern register gives the older book no real second attempt.
 5. **An anachronistic or period-specific trigger term needs translating before it's queried, not
    querying literally.** A modern term with no period equivalent (e.g. "social media") will return
    nothing from an older book even if that book addresses the same underlying pattern under a
    different form. Name the *structural role* the term plays first (a venue where many watch one
    curated performance at once, for status or vicarious participation) and phrase the query around
    that role, in each book's own language, rather than the literal modern term.
+
+## Vocabulary: match each book's own words
+
+Retrieval is largely literal keyword matching, and two books on the same subject often use different
+words for it. A query worded in one neutral voice fits the book whose words it happens to share and
+misses the other. Before writing a query, work out what each book would call the concept:
+
+- Name the concept in neutral terms first, so you know what the query is about.
+- For each book, write the words that book itself would use for it: its nouns for concrete things,
+  its technical terms for abstract ones, and its own spellings and inflections.
+- If you cannot name a book's words for a concept with confidence, say so in your reply and mark the
+  query as a twin candidate. Do not guess a book's vocabulary and present it as known.
+
+Choose the query shape by what the two books share:
+
+| The books' vocabulary for the concept | Query shape |
+|---|---|
+| Both use the same words | One untagged query, in those shared words |
+| Only one book's words fit | A twin pair, tagging the book whose words fit |
+| Both books have the concept, in different registers | A twin pair, each in its own register, same intent |
+
+Cautions that hold for any pair of books:
+
+- A word can mean something different in each book. Before choosing a word, check which sense the
+  target book uses, since the other sense can pull in the wrong passages.
+- Match inflections and archaic forms. A modern paraphrase, or a different tense or verb form, can
+  miss a passage that is in the text as written.
+- When the exact wording of a passage is known and matches the edition in use, phrase the query with
+  that wording. A query that describes the scene instead of quoting its wording tends to return the
+  right passage, but a neighbouring sentence as the quote.
+- Do not build a query from a remembered quotation unless you can check its wording against the
+  edition in use. A remembered wording that differs from the edition will miss. A concept phrased in
+  the book's own words is the safer fallback.
+
+## Twin queries: one intent, one wording per book
+
+Use a twin pair when the intent is about a concrete addressee, object, or scene that only one book's
+vocabulary names, so the other book's wording would miss. Each twin is its own query under the same
+thesis, written in the tagged book's words. The tag goes right after the letter, in square brackets,
+before the colon: `Query 1.1a[A]:` for book A's wording, `Query 1.1b[B]:` for book B's.
+
+The tag is read only by the batch runner. The text after the colon is sent to retrieval exactly as
+written, and both books are still searched with it. The stored result keeps both books' findings
+for that query. When the runner builds the synthesis, it passes only the tagged book's findings for
+that query, and drops the shared agreement and disagreement. A twin is therefore worth writing when
+its tagged side is the side you want the synthesis to draw on.
+
+- Write both halves of a pair when both books have something to say about the intent.
+- Write only the tagged half when only one book does.
+- A query whose vocabulary both books share stays untagged, as a single query. Both books' findings
+  are kept.
 
 ## What to hand back
 
@@ -93,6 +145,8 @@ Theme 1: <title, as given>
 Thesis 1.1: <one bounded, declarative sentence>
   Query 1.1a: <single-themed, targeted query>
   Query 1.1b: <...>
+  Query 1.1c[A]: <twin, in book A's words>
+  Query 1.1d[B]: <twin, in book B's words, same intent>
 
 Thesis 1.2: <one bounded, declarative sentence>
   Query 1.2a: <...>
@@ -109,7 +163,8 @@ Rules:
 - Each theme starts with `Theme N:`. Theme numbers follow the order in the file. The number of themes is not fixed.
 - Each thesis starts with `Thesis N.M:`, where N is its theme's number and M counts its theses within that theme, starting at 1. The label is the thesis's unique ID, so every thesis in the file has its own.
 - Each query starts with `Query N.Ma:`, where N.M is its thesis's label and the letter a, b, c, ... counts its queries within that thesis. Every query label is unique in the file, so `Query 2.1a:` is always the first query of Theme 2, Thesis 1, and never repeats a label used under another thesis.
-- Exactly one query per letter. No alternates or variants.
+- A twin query puts its book tag between the letter and the colon: `Query N.Ma[A]:` or `Query N.Ma[B]:`. Untagged queries keep the plain `Query N.Ma:` form.
+- Exactly one query per letter. No alternates or variants. A twin pair is two letters under the same thesis, each with its own tag.
 - Add a second thesis to a theme only if the theme failed the common-throughline test. If a theme needs only one thesis, write only `Thesis N.1:`.
 
 Not a flat batch of unrelated ideas: every query traces to one thesis, and every thesis traces to its theme.
