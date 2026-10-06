@@ -10,7 +10,8 @@ from pathlib import Path
 from ParallelProse.agent import ComposerAnswer, run_query
 from ParallelProse.catalog import CATALOG, DATA_DIR
 from ParallelProse.consolidate_synthesis import consolidate_synthesis_file
-from ParallelProse.synthesis import load_bites, save_bite, save_synthesis, synthesize
+from ParallelProse.synthesis import (UnknownBiteLabelError, load_bites, save_bite, save_synthesis,
+                                     save_synthesis_error, synthesize)
 
 PROJECT = "augustine_debord"
 BATCHES_PATH = DATA_DIR / "theme_batches"
@@ -135,9 +136,12 @@ async def run_theme_batches(batch_file: Path) -> Path:
                 })
             if thesis.queries:
                 _, _, bites = load_bites(path)
-                bites = [(q, restrict_to_side(a, side) if side else a)
-                         for (q, a), (_, _, side) in zip(bites, thesis.queries)]
-                save_synthesis(path, synthesize(theme.title, thesis.text, bites))
+                bites = [(label, q, restrict_to_side(a, side) if side else a)
+                         for (q, a), (label, _, side) in zip(bites, thesis.queries)]
+                try:
+                    save_synthesis(path, synthesize(theme.title, thesis.text, bites))
+                except UnknownBiteLabelError as error:
+                    save_synthesis_error(path, str(error))  # this thesis is recorded as failed; the run continues
 
     return consolidate_synthesis_file(session)
 

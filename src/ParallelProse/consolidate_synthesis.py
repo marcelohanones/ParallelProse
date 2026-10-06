@@ -12,7 +12,8 @@ def consolidate_synthesis_file(session_dir: Path) -> Path:
             session = json.loads(thesis_file.read_text())
             theme_title = theme_title or session["theme"]
             theses.append({"file": thesis_file.name, "thesis": session["thesis"],
-                           "synthesis": session.get("synthesis")})
+                           "synthesis": session.get("synthesis"),
+                           "synthesis_error": session.get("synthesis_error")})
         themes.append({"folder": theme_dir.name, "theme": theme_title, "theses": theses})
 
     manifest_path = session_dir / "manifest.json"

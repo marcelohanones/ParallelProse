@@ -28,8 +28,8 @@ def test_consolidate_merges_every_thesis_synthesis_under_its_theme(tmp_path):
     first = data["themes"][0]
     assert first["theme"] == "First"
     assert first["theses"] == [
-        {"file": "thesis-01.json", "thesis": "t1a", "synthesis": {"claims": ["c1a"]}},
-        {"file": "thesis-02.json", "thesis": "t1b", "synthesis": None},
+        {"file": "thesis-01.json", "thesis": "t1a", "synthesis": {"claims": ["c1a"]}, "synthesis_error": None},
+        {"file": "thesis-02.json", "thesis": "t1b", "synthesis": None, "synthesis_error": None},
     ]
 
 

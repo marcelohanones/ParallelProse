@@ -5,7 +5,7 @@ import pytest
 
 from ParallelProse import theme_batches as tb
 from ParallelProse.agent import ComposerAnswer, CorpusFinding
-from ParallelProse.synthesis import Synthesis, UncoveredAngle
+from ParallelProse.synthesis import Synthesis, UncoveredAngle, UnknownBiteLabelError
 
 BATCH = """Theme 1: Crowds and the gaze
 
@@ -125,7 +125,7 @@ def test_run_theme_batches_hands_synthesis_only_the_tagged_side(tmp_path, monkey
     asyncio.run(tb.run_theme_batches(batch_file))
 
     bites = seen["Both books treat a friend as a way out."]
-    tagged, shared = bites[0][1], bites[1][1]
+    tagged, shared = bites[0][2], bites[1][2]
     assert [f.corpus_id for f in tagged.unique_findings] == ["A"]
     assert tagged.agreement == ""
     assert [f.corpus_id for f in shared.unique_findings] == ["A", "B"]
@@ -156,7 +156,7 @@ def test_run_theme_batches_builds_the_session_tree(tmp_path, monkeypatch):
 
     monkeypatch.setattr(tb, "run_query", fake_run_query)
     monkeypatch.setattr(tb, "synthesize", lambda theme, thesis, bites: Synthesis(
-        claims=[], uncovered_angle=UncoveredAngle(angle="x", checked_bites=[q for q, _ in bites]),
+        claims=[], uncovered_angle=UncoveredAngle(angle="x", checked_bites=[label for label, _, _ in bites]),
         candidate_query=None))
     batch_file = tmp_path / "themes.md"
     batch_file.write_text(BATCH)
@@ -175,13 +175,40 @@ def test_run_theme_batches_builds_the_session_tree(tmp_path, monkeypatch):
     assert theme_dirs == ["theme-01_crowds-and-the-gaze", "theme-02_time-memory-the-self"]
     first_thesis = json.loads((session / theme_dirs[0] / "thesis-01.json").read_text())
     assert len(first_thesis["bites"]) == 2
-    assert first_thesis["synthesis"]["uncovered_angle"]["checked_bites"] == [
-        "How does a crowd influence the behavior of the people who belong to it?",
-        "What does a person lose of himself in a crowd?",
-    ]
+    assert first_thesis["synthesis"]["uncovered_angle"]["checked_bites"] == ["1.1a", "1.1b"]
     assert first_thesis["bites"][0]["verified"] == {"A": True, "B": True}
     assert first_thesis["bites"][0]["retrieval"]["A"] == {"label": "ok", "reason": "fine", "lineage": []}
 
     consolidated = json.loads(out.read_text())
     assert [t["folder"] for t in consolidated["themes"]] == theme_dirs
     assert consolidated["themes"][1]["theses"][0]["synthesis"] is not None
+
+
+def test_a_thesis_with_a_stray_label_is_recorded_and_the_run_continues(tmp_path, monkeypatch):
+    monkeypatch.setattr(tb, "BATCHES_PATH", tmp_path)
+    monkeypatch.setattr(tb, "QUERY_PAUSE_SECONDS", 0)
+
+    async def fake_run_query(query):
+        return {"answer": answer("x"), "corpora": corpora_for()}
+
+    def fake_synthesize(theme, thesis, bites):
+        if thesis.startswith("Both books describe"):
+            raise UnknownBiteLabelError("synthesis cited unknown bite labels: ['Bite 1.1a']")
+        return Synthesis(claims=[], uncovered_angle=None, candidate_query=None)
+
+    monkeypatch.setattr(tb, "run_query", fake_run_query)
+    monkeypatch.setattr(tb, "synthesize", fake_synthesize)
+    batch_file = tmp_path / "themes.md"
+    batch_file.write_text(BATCH)
+
+    out = asyncio.run(tb.run_theme_batches(batch_file))
+
+    session = out.parent
+    failed = json.loads((session / "theme-01_crowds-and-the-gaze" / "thesis-01.json").read_text())
+    assert "synthesis" not in failed
+    assert failed["synthesis_error"] == "synthesis cited unknown bite labels: ['Bite 1.1a']"
+    assert len(failed["bites"]) == 2  # the answers are kept even though the synthesis failed
+    later = json.loads((session / "theme-02_time-memory-the-self" / "thesis-01.json").read_text())
+    assert later["synthesis"] is not None and "synthesis_error" not in later
+    consolidated = json.loads(out.read_text())
+    assert consolidated["themes"][0]["theses"][0]["synthesis_error"] == failed["synthesis_error"]

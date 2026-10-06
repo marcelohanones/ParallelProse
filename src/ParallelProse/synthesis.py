@@ -21,20 +21,29 @@ def load_bites(path: Path) -> tuple[str, str, list[tuple[str, ComposerAnswer]]]:
 
 
 def save_synthesis(path: Path, result: "Synthesis") -> None:
-    """Stores the latest synthesize() result under the session file's own "synthesis" key."""
+    """Stores the latest synthesize() result under the session file's own "synthesis" key, clearing any earlier synthesis_error."""
     session = json.loads(path.read_text())
+    session.pop("synthesis_error", None)
     session["synthesis"] = result.model_dump()
+    path.write_text(json.dumps(session, indent=2))
+
+
+def save_synthesis_error(path: Path, message: str) -> None:
+    """Records a failed synthesis under "synthesis_error" and drops any earlier "synthesis", so the thesis file never shows a stale result as current."""
+    session = json.loads(path.read_text())
+    session.pop("synthesis", None)
+    session["synthesis_error"] = message
     path.write_text(json.dumps(session, indent=2))
 
 
 class SynthesisClaim(BaseModel):
     claim: str  # one connective statement toward the thesis
-    based_on: list[str]  # the query text of each bite this claim draws on
+    based_on: list[str]  # the bite label (e.g. "1.1a") of each bite this claim draws on
 
 
 class UncoveredAngle(BaseModel):
     angle: str  # the part of the theme/thesis no bite's finding addresses
-    checked_bites: list[str]  # every bite's query that was actually checked against this angle
+    checked_bites: list[str]  # the bite label of every bite that was actually checked against this angle
 
 
 class Synthesis(BaseModel):
@@ -43,12 +52,25 @@ class Synthesis(BaseModel):
     candidate_query: str | None  # suggested next query — never executed, only surfaced
 
 
-def synthesize(theme: str, thesis: str, bites: list[tuple[str, ComposerAnswer]]) -> Synthesis:
+class UnknownBiteLabelError(ValueError):
+    """synthesize() cited a bite label it was not given."""
+
+
+def unknown_bite_ids(result: Synthesis, known_labels: set[str]) -> set[str]:
+    """Every bite label that result cites in a claim's based_on or in uncovered_angle's checked_bites, but that is not one of known_labels."""
+    cited = {label for claim in result.claims for label in claim.based_on}
+    if result.uncovered_angle is not None:
+        cited |= set(result.uncovered_angle.checked_bites)
+    return cited - known_labels
+
+
+def synthesize(theme: str, thesis: str, bites: list[tuple[str, str, ComposerAnswer]]) -> Synthesis:
     """Weaves finished bites into a connective, attributable narrative toward thesis, and names one gap
     against the theme. `theme` only ever drives uncovered_angle/candidate_query — claims stay grounded
-    in thesis + bites alone, never in the theme's own (possibly anachronistic) wording."""
-    # 1 - render each bite via the existing format_answer, tagged by its own query
-    bites_text = "\n\n".join(f"Query: {q}\n{format_answer(a)}" for q, a in bites)
+    in thesis + bites alone, never in the theme's own (possibly anachronistic) wording. Each bite is a
+    (label, query, answer) triple; the model cites bites by label, and a label it invents raises ValueError."""
+    # 1 - render each bite via the existing format_answer, tagged by its label and its own query
+    bites_text = "\n\n".join(f"[{label}] Query: {q}\n{format_answer(a)}" for label, q, a in bites)
 
     # 2 - build the prompt: thesis + rendered bites drive claims; theme only drives the gap-check
     prompt = f"Thesis: {thesis}\n\nBites:\n{bites_text}\n\n" \
@@ -57,7 +79,8 @@ def synthesize(theme: str, thesis: str, bites: list[tuple[str, ComposerAnswer]])
              "own named points of disagreement (e.g. its stated cause vs. its stated remedy) and " \
              "connect whichever bites address each one. Write a claim based on a single bite only " \
              "when no other bite's content genuinely relates to it — do not default to one claim " \
-             "per bite. Each claim must name which bite(s) (by query) it is based_on, and must " \
+             "per bite. Each claim must name which bite(s) it is based_on, using only the label between " \
+             "the square brackets exactly as shown (e.g. 1.1a, never 'Bite 1.1a' or the query text), and must " \
              "never assert something those specific bites don't themselves establish; never invent " \
              "a connection between bites that isn't actually there just to combine them. Every bite " \
              "must appear in at least one claim's based_on — none skipped, even if a bite only ever " \
@@ -78,7 +101,7 @@ def synthesize(theme: str, thesis: str, bites: list[tuple[str, ComposerAnswer]])
              "form was large for that era, never for a literal count. Phrase candidate_query around " \
              "that structural role in each book's own language, never around the theme's literal " \
              "modern term.\n\n" \
-             "uncovered_angle itself must list checked_bites: every single bite's query you actually " \
+             "uncovered_angle itself must list checked_bites: every single bite's bracketed label you actually " \
              "looked at before concluding none of them cover this angle - if you cannot name which " \
              "bites you checked, you have not actually verified the gap, and must not set " \
              "uncovered_angle at all. Never attribute specific content to a bite (e.g. 'bite X " \
@@ -86,4 +109,10 @@ def synthesize(theme: str, thesis: str, bites: list[tuple[str, ComposerAnswer]])
 
     # 3 - call structured output, return directly
     llm_call = llm.with_structured_output(Synthesis)
-    return llm_call.invoke(prompt)
+    result = llm_call.invoke(prompt)
+
+    # 4 - every cited label must be a bite label this call was given; a stray one fails loudly
+    unknown = unknown_bite_ids(result, {label for label, _, _ in bites})
+    if unknown:
+        raise UnknownBiteLabelError(f"synthesis cited unknown bite labels: {sorted(unknown)}")
+    return result

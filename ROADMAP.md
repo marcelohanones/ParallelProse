@@ -17,7 +17,7 @@
   validated against item 10's own test) are all done (2026-10-02 through 2026-10-03) — see "v3 — after v2 is
   complete" below.
 - **v4 (in progress, started 2026-10-03)** — a synthesis layer connecting several targeted queries to a stated
-  thesis (item 12, committed), then a proper test suite (item 16), then a theme parser (item 17), then the evaluation harness (item 26). Items
+  thesis (item 12, committed), then a proper test suite (item 16), then a theme parser (item 17), then the evaluation harness (item 27). Items
   13-15 are the retrieval and silent-verdict fixes built after item 12 was committed. The synthesis layer was always
   its own version — a distinct capability layered on top of a finished, tested two-book comparison
   system; the test suite and eval harness moved here from v3 since v3's own completion no longer waits on them, and
@@ -346,7 +346,7 @@ grounding loop would be far harder to catch. Keeping the thesis entirely outside
 function that only ever consumes already quote-backed answers, avoids both risks. **Synergy:** manual-first by
 design — automatic chasing (the system deciding to run its own suggested query) is deliberately deferred until
 the manual version proves useful. Kept as its own item within v4 rather than folded into the test suite or eval
-harness (items 16 and 26): it's a distinct capability layered on top of a finished, tested two-book comparison
+harness (items 16 and 27): it's a distinct capability layered on top of a finished, tested two-book comparison
 system, not a prerequisite for either of those, which cover the graph as it stands today.
 
 **Also in item 12 — `composer` keeps settled findings. Status: done, validated, 2026-10-04.**
@@ -409,7 +409,7 @@ Augustine in the text, so that part is enforced in code. **Validated:** routing 
 run that went `silent` ran `finalize` and got the override; the override was also checked directly with one book
 silent and with both silent. The 12-query sweep run before this change had one `silent` (commodities, Augustine) that
 skipped the override, which is the case this fixes. **Still open:** the `silent` verdicts are inconsistent (commodities
-was `ok` 15 of 15 in an earlier test and `silent` once since), and item 26's labeled set is what can settle that.
+was `ok` 15 of 15 in an earlier test and `silent` once since), and item 27's labeled set is what can settle that.
 
 ### 16. Test suite
 
@@ -426,7 +426,7 @@ they just print; and they sit mixed in with live-call demo code in the same `__m
 "Guard module side effects"). **Synergy:** lands after packaging (item 9), after `Critique`'s 2-book-native
 shape settles (items 10-11), and after the synthesis layer (item 12) and the retrieval and silent-verdict fixes (items 13-15), because `run_query()`, `Critique`, and
 `synthesize()` are exactly the things this suite needs to test against shapes that are finished changing; also
-lands before the eval harness (item 26), because that harness checks answer *quality*, a different concern from
+lands before the eval harness (item 27), because that harness checks answer *quality*, a different concern from
 code correctness — it benefits from running against code that's already covered, not the other way around.
 
 ### 17. Theme batches — one batch file, one run per theme
@@ -466,7 +466,7 @@ rest" (Debord's sleep image is a stretch). The one-sided query, "how does identi
 the place of the spectator's own life," is a search miss, not real silence: Augustine's theatre passage on compassion
 for "feigned and scenical passions" (Book III) answers it, but parent, BM25 and ensemble retrieval never return it
 for this wording. Its silent label is wrong as worded, and this is the case that retrieval, not the brief, needs
-to address. Label leniency is still open (item 26).
+to address. Label leniency is still open (item 27).
 
 ### 18. Thesis consolidator — one flat file per session
 
@@ -543,7 +543,22 @@ in use. **Why:** v5 and v6 misses came from vocabulary and wording. In v6, passa
 back as hits, and scene descriptions came back as partial quotes. **Constraint:** the brief stays agnostic. Term-level
 advice for a given book stays out of the file.
 
-### 26. Evaluation harness
+### 26. Synthesis cites bites by label, not by query text
+
+**Status: done, 2026-10-06 (uncommitted).** **What:** `synthesize` takes `(label, query, answer)` triples. The
+label is the batch label of the query (`1.1a`), and the prompt shows it as `[1.1a] Query: ...`. `based_on` and
+`uncovered_angle.checked_bites` hold labels. `unknown_bite_ids` (`synthesis.py`) lists any cited label that was not
+given, and `synthesize` raises `UnknownBiteLabelError` on one, so a stray id cannot pass silently. `run_theme_batches`
+catches that error per thesis: the thesis file gets `synthesis_error` (and no `synthesis`), the bites are kept, and the
+run continues. `consolidate_synthesis_file` carries `synthesis_error` into the consolidated file. Bites on disk keep their query
+text; `load_bites` and `save_bite` are unchanged. **Why:** a defect. In v6 the model shortened a query when it wrote
+`based_on`, so the claim no longer joined to its bite by string (evaluation S1). **Validated:** 3 offline tests
+(`tests/test_synthesis.py`), a run test where a failing thesis is recorded and the next one still synthesizes, and the full suite (38 passing). Two real syntheses on v5 theses (one bite, and three bites):
+every cited label was a known label. **Found on the first real attempt:** the model cited `Bite 6.1a`, copying the
+prefix from the first rendering. The rendering was changed to the bare bracketed label and the prompt now says to cite
+that label exactly. **Open:** existing `*_synthesis.json` files still hold query text; they are not re-synthesized, by decision.
+
+### 27. Evaluation harness
 
 **Status: planned.** **What:** a LangSmith-hosted golden set (~10 targeted questions against Augustine/Debord,
 including at least one question only one book addresses, to exercise `reflect`'s `"silent"` case), traced
