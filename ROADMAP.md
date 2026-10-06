@@ -17,7 +17,7 @@
   validated against item 10's own test) are all done (2026-10-02 through 2026-10-03) — see "v3 — after v2 is
   complete" below.
 - **v4 (in progress, started 2026-10-03)** — a synthesis layer connecting several targeted queries to a stated
-  thesis (item 12, committed), then a proper test suite (item 16), then a theme parser (item 17), then the evaluation harness (item 28). Items
+  thesis (item 12, committed), then a proper test suite (item 16), then a theme parser (item 17), then the evaluation harness (item 29). Items
   13-15 are the retrieval and silent-verdict fixes built after item 12 was committed. The synthesis layer was always
   its own version — a distinct capability layered on top of a finished, tested two-book comparison
   system; the test suite and eval harness moved here from v3 since v3's own completion no longer waits on them, and
@@ -346,7 +346,7 @@ grounding loop would be far harder to catch. Keeping the thesis entirely outside
 function that only ever consumes already quote-backed answers, avoids both risks. **Synergy:** manual-first by
 design — automatic chasing (the system deciding to run its own suggested query) is deliberately deferred until
 the manual version proves useful. Kept as its own item within v4 rather than folded into the test suite or eval
-harness (items 16 and 28): it's a distinct capability layered on top of a finished, tested two-book comparison
+harness (items 16 and 29): it's a distinct capability layered on top of a finished, tested two-book comparison
 system, not a prerequisite for either of those, which cover the graph as it stands today.
 
 **Also in item 12 — `composer` keeps settled findings. Status: done, validated, 2026-10-04.**
@@ -409,7 +409,7 @@ Augustine in the text, so that part is enforced in code. **Validated:** routing 
 run that went `silent` ran `finalize` and got the override; the override was also checked directly with one book
 silent and with both silent. The 12-query sweep run before this change had one `silent` (commodities, Augustine) that
 skipped the override, which is the case this fixes. **Still open:** the `silent` verdicts are inconsistent (commodities
-was `ok` 15 of 15 in an earlier test and `silent` once since), and item 28's labeled set is what can settle that.
+was `ok` 15 of 15 in an earlier test and `silent` once since), and item 29's labeled set is what can settle that.
 
 ### 16. Test suite
 
@@ -426,7 +426,7 @@ they just print; and they sit mixed in with live-call demo code in the same `__m
 "Guard module side effects"). **Synergy:** lands after packaging (item 9), after `Critique`'s 2-book-native
 shape settles (items 10-11), and after the synthesis layer (item 12) and the retrieval and silent-verdict fixes (items 13-15), because `run_query()`, `Critique`, and
 `synthesize()` are exactly the things this suite needs to test against shapes that are finished changing; also
-lands before the eval harness (item 28), because that harness checks answer *quality*, a different concern from
+lands before the eval harness (item 29), because that harness checks answer *quality*, a different concern from
 code correctness — it benefits from running against code that's already covered, not the other way around.
 
 ### 17. Theme batches — one batch file, one run per theme
@@ -466,7 +466,7 @@ rest" (Debord's sleep image is a stretch). The one-sided query, "how does identi
 the place of the spectator's own life," is a search miss, not real silence: Augustine's theatre passage on compassion
 for "feigned and scenical passions" (Book III) answers it, but parent, BM25 and ensemble retrieval never return it
 for this wording. Its silent label is wrong as worded, and this is the case that retrieval, not the brief, needs
-to address. Label leniency is still open (item 28).
+to address. Label leniency is still open (item 29).
 
 ### 18. Thesis consolidator — one flat file per session
 
@@ -507,7 +507,7 @@ v5 and v6 have no `verified` field.
 
 ### 22. Debord PDF: layout extraction and reindex
 
-**Status: done, 2026-10-05 (uncommitted); Debord collection rebuilt locally.** **What:** `_pdf_pages` (`ingest.py`)
+**Status: done, 2026-10-05 (uncommitted); Debord collection rebuilt locally.** **What (its layout-mode reading is superseded by item 28):** `_pdf_pages` (`ingest.py`)
 replaces `PyPDFLoader` for the PDF branch. It reads each page in pypdf's layout mode and falls back to plain extraction
 when layout mode raises `IndexError` (5 pages in this PDF). It also collapses runs of spaces. The Debord collection was
 rebuilt with `add_parent_child_docs(rebuild=True)`: 854 child chunks (was 890). The previous index is kept at
@@ -576,7 +576,29 @@ passages), plus one corpus artifact (a PDF hyphen break, "state-t hat"). **Open:
 flagged, but quote selection is not re-run; the corpus's PDF hyphen breaks are not repaired; bites from v8 and earlier
 have no `verification` field; `retrieval_query` (the search string actually sent) is not yet stored.
 
-### 28. Evaluation harness
+### 28. Quote matching: prefix and fragment; Debord text in plain order, with split words repaired
+
+**Status: done, 2026-10-06 (uncommitted).** **What:** (a) `quote_check.py` compares quotes in a form where quote marks are
+removed and the quote's trailing punctuation is ignored, on both sides of the comparison (`match_form`). Punctuation
+inside the quote still counts. (b) Two new statuses: `prefix` (the quote opens a longer sentence) and `fragment` (the
+quote sits inside one). Each carries `quote_full`, the whole sentence as written. Both count as verified, like `verbatim`.
+(c) `ingest._pdf_pages` reads Debord in plain extraction order again. Plain order keeps the margin notes out of the body;
+layout order merged them in, so 28 thesis numbers landed mid-sentence, against 1 in plain. Hidden hyphens are dropped,
+split words are rejoined by `_join_split_words` (a fragment is joined when at least 90% of its occurrences form a word
+found elsewhere in the text), and three splits are fixed by name in `KNOWN_PDF_SPLITS`. **Why:** (a) and (b) are the v9
+false negatives: trailing punctuation, quote marks, and quotes cut short. (c) is a defect in the indexed text: the thesis
+13 sentence sat inside thesis 3, and split words the rule cannot reach ("monolog ue") kept quotes from matching.
+**Validated:** 49 offline tests (`tests/test_quote_check.py`, `tests/test_ingest.py`). Debord index rebuilt: 891 child
+chunks, 83 parents. In it, the listed split words are gone, the only mid-sentence thesis number is a note reference
+("40, 44, 47. survival"), and "its never-ending monologue of self-praise", "The social separation reflected in the
+spectacle…", and "The moments within cyclical time…" are in the parent passages. **Open:** the automatic rule cannot
+join a word whose whole form never occurs intact; `KNOWN_PDF_SPLITS` has to be extended by hand (a rule without a
+dictionary joined "united states" and "few days"). Knabb's margin notes are still in the body text, as separate
+passages. Quote selection still picks a neighbouring sentence, and an echoed quote is not re-selected. Backups of the
+earlier indexes are in `data/_backup_before_debord_reindex/` and `data/_backup_before_desplit/`. Bites from v9 and earlier
+were verified against the text they were produced with.
+
+### 29. Evaluation harness
 
 **Status: planned.** **What:** a LangSmith-hosted golden set (~10 targeted questions against Augustine/Debord,
 including at least one question only one book addresses, to exercise `reflect`'s `"silent"` case), traced
