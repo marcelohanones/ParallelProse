@@ -10,6 +10,7 @@ from pathlib import Path
 from ParallelProse.agent import ComposerAnswer, run_query
 from ParallelProse.catalog import CATALOG, DATA_DIR
 from ParallelProse.consolidate_synthesis import consolidate_synthesis_file
+from ParallelProse.quote_check import verified_flags, verify_quotes
 from ParallelProse.synthesis import (UnknownBiteLabelError, load_bites, save_bite, save_synthesis,
                                      save_synthesis_error, synthesize)
 
@@ -76,23 +77,6 @@ def restrict_to_side(answer: ComposerAnswer, side: str) -> ComposerAnswer:
                           unique_findings=[f for f in answer.unique_findings if f.corpus_id == side])
 
 
-def normalize_text(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip().lower()
-
-
-def verify_quotes(answer: ComposerAnswer, corpora: dict) -> dict[str, bool | None]:
-    """Per book, whether its quote appears verbatim in that book's retrieved chunks (whitespace and case aside).
-    None when the book has no quote, as with a silent book."""
-    verified = {}
-    for finding in answer.unique_findings:
-        if finding.quote is None:
-            verified[finding.corpus_id] = None
-        else:
-            chunks = normalize_text(" ".join(corpora[finding.corpus_id]["chunks"]))
-            verified[finding.corpus_id] = normalize_text(finding.quote) in chunks
-    return verified
-
-
 def side_is_target(answer: ComposerAnswer, side: str | None) -> dict[str, bool | None]:
     """Per book, whether that book is the one a twin query was tagged with. None for an untagged query, where neither side is the target."""
     return {f.corpus_id: None if side is None else f.corpus_id == side for f in answer.unique_findings}
@@ -129,9 +113,11 @@ async def run_theme_batches(batch_file: Path) -> Path:
                     await asyncio.sleep(QUERY_PAUSE_SECONDS)
                 first_query = False
                 result = await run_query(query)
+                quote_details = verify_quotes(result["answer"], result["corpora"], query)
                 save_bite(path, theme.title, thesis.text, query, result["answer"], extra={
                     "side_is_target": side_is_target(result["answer"], side),
-                    "verified": verify_quotes(result["answer"], result["corpora"]),
+                    "verified": verified_flags(quote_details),
+                    "verification": quote_details,
                     "retrieval": retrieval_diagnostics(result["corpora"]),
                 })
             if thesis.queries:

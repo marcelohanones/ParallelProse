@@ -17,7 +17,7 @@
   validated against item 10's own test) are all done (2026-10-02 through 2026-10-03) — see "v3 — after v2 is
   complete" below.
 - **v4 (in progress, started 2026-10-03)** — a synthesis layer connecting several targeted queries to a stated
-  thesis (item 12, committed), then a proper test suite (item 16), then a theme parser (item 17), then the evaluation harness (item 27). Items
+  thesis (item 12, committed), then a proper test suite (item 16), then a theme parser (item 17), then the evaluation harness (item 28). Items
   13-15 are the retrieval and silent-verdict fixes built after item 12 was committed. The synthesis layer was always
   its own version — a distinct capability layered on top of a finished, tested two-book comparison
   system; the test suite and eval harness moved here from v3 since v3's own completion no longer waits on them, and
@@ -346,7 +346,7 @@ grounding loop would be far harder to catch. Keeping the thesis entirely outside
 function that only ever consumes already quote-backed answers, avoids both risks. **Synergy:** manual-first by
 design — automatic chasing (the system deciding to run its own suggested query) is deliberately deferred until
 the manual version proves useful. Kept as its own item within v4 rather than folded into the test suite or eval
-harness (items 16 and 27): it's a distinct capability layered on top of a finished, tested two-book comparison
+harness (items 16 and 28): it's a distinct capability layered on top of a finished, tested two-book comparison
 system, not a prerequisite for either of those, which cover the graph as it stands today.
 
 **Also in item 12 — `composer` keeps settled findings. Status: done, validated, 2026-10-04.**
@@ -409,7 +409,7 @@ Augustine in the text, so that part is enforced in code. **Validated:** routing 
 run that went `silent` ran `finalize` and got the override; the override was also checked directly with one book
 silent and with both silent. The 12-query sweep run before this change had one `silent` (commodities, Augustine) that
 skipped the override, which is the case this fixes. **Still open:** the `silent` verdicts are inconsistent (commodities
-was `ok` 15 of 15 in an earlier test and `silent` once since), and item 27's labeled set is what can settle that.
+was `ok` 15 of 15 in an earlier test and `silent` once since), and item 28's labeled set is what can settle that.
 
 ### 16. Test suite
 
@@ -426,7 +426,7 @@ they just print; and they sit mixed in with live-call demo code in the same `__m
 "Guard module side effects"). **Synergy:** lands after packaging (item 9), after `Critique`'s 2-book-native
 shape settles (items 10-11), and after the synthesis layer (item 12) and the retrieval and silent-verdict fixes (items 13-15), because `run_query()`, `Critique`, and
 `synthesize()` are exactly the things this suite needs to test against shapes that are finished changing; also
-lands before the eval harness (item 27), because that harness checks answer *quality*, a different concern from
+lands before the eval harness (item 28), because that harness checks answer *quality*, a different concern from
 code correctness — it benefits from running against code that's already covered, not the other way around.
 
 ### 17. Theme batches — one batch file, one run per theme
@@ -466,7 +466,7 @@ rest" (Debord's sleep image is a stretch). The one-sided query, "how does identi
 the place of the spectator's own life," is a search miss, not real silence: Augustine's theatre passage on compassion
 for "feigned and scenical passions" (Book III) answers it, but parent, BM25 and ensemble retrieval never return it
 for this wording. Its silent label is wrong as worded, and this is the case that retrieval, not the brief, needs
-to address. Label leniency is still open (item 27).
+to address. Label leniency is still open (item 28).
 
 ### 18. Thesis consolidator — one flat file per session
 
@@ -497,7 +497,7 @@ v5 and v6 ran with this filter active.
 
 ### 21. Quote verification — `verified` per book
 
-**Status: done, 2026-10-05 (uncommitted).** **What:** `verify_quotes` (`theme_batches.py`) stores `verified` on every
+**Status: done, 2026-10-05 (uncommitted).** **What:** `verify_quotes` (now in `quote_check.py`, see item 27) stores `verified` on every
 bite: for each book, `true` if its quote appears in that book's retrieved chunks, `false` if not, `null` if the book has
 no quote. Whitespace and case are ignored. **Why:** a defect. Quotes come from the composer's LLM with no check, and
 in v5 only 3 of 10 Debord quotes appeared verbatim in the source text (4 had joined spans with ellipses, 3 were not
@@ -558,7 +558,25 @@ every cited label was a known label. **Found on the first real attempt:** the mo
 prefix from the first rendering. The rendering was changed to the bare bracketed label and the prompt now says to cite
 that label exactly. **Open:** existing `*_synthesis.json` files still hold query text; they are not re-synthesized, by decision.
 
-### 27. Evaluation harness
+### 27. Quote verification states why a quote fails
+
+**Status: done, 2026-10-06 (uncommitted).** **What:** verification moved to `quote_check.py`. `normalize_text` folds
+NFKC forms, case, whitespace, dash and quote variants, and drops soft hyphens (U+00AD) that the PDF leaves at line
+breaks. `verify_quotes(answer, corpora, query)` returns, per book, a `status`: `verbatim`, `echo_of_query` (the quote
+is the query itself), `differs_only_by_corpus_numbers` (matches once the corpus's bare thesis numbers are ignored),
+`not_found`, or `no_quote`. A failed quote also carries `similarity`, `nearest` (the closest passage in that book's
+retrieved chunks, one or two sentences) and `differences` (the first spans where quote and passage disagree). Each bite
+stores `verification` beside the existing `verified`, which stays a boolean and is `true` only for `verbatim`.
+**Why:** a defect. `verified: false` gave no reason, and the evaluation could not tell a real misquote from a
+verifier false negative. Soft hyphens and dash variants caused false negatives; a quote equal to the query was accepted
+as verified. **Validated:** 7 offline tests (`tests/test_quote_check.py`); the suite passes (43). Applied to the 9
+quotes of v8 against the book's real paragraphs: 2 `verbatim`, 1 `echo_of_query`, 6 `not_found`. The 6 are real changes
+in the quote (a changed "?" to ",", a paraphrase, a sentence cut short with a period added, an ellipsis joining two
+passages), plus one corpus artifact (a PDF hyphen break, "state-t hat"). **Open:** a quote that echoes the query is
+flagged, but quote selection is not re-run; the corpus's PDF hyphen breaks are not repaired; bites from v8 and earlier
+have no `verification` field; `retrieval_query` (the search string actually sent) is not yet stored.
+
+### 28. Evaluation harness
 
 **Status: planned.** **What:** a LangSmith-hosted golden set (~10 targeted questions against Augustine/Debord,
 including at least one question only one book addresses, to exercise `reflect`'s `"silent"` case), traced

@@ -77,24 +77,6 @@ def test_parse_batch_rejects_malformed_lines(bad, message):
         tb.parse_batch(bad)
 
 
-def test_verify_quotes_checks_each_quote_against_its_own_books_chunks():
-    corpora = corpora_for(chunk_a="the  Quote\nspans", chunk_b="unrelated")
-    checked = tb.verify_quotes(ComposerAnswer(agreement="", disagreement="", unique_findings=[
-        CorpusFinding(corpus_id="A", finding="a", quote="the quote spans"),
-        CorpusFinding(corpus_id="B", finding="b", quote="qb"),
-    ]), corpora)
-
-    assert checked == {"A": True, "B": False}
-
-
-def test_verify_quotes_is_none_for_a_book_without_a_quote():
-    checked = tb.verify_quotes(ComposerAnswer(agreement="", disagreement="", unique_findings=[
-        CorpusFinding(corpus_id="A", finding="query content is absent", quote=None),
-    ]), corpora_for())
-
-    assert checked == {"A": None}
-
-
 def test_restrict_to_side_keeps_one_book_and_blanks_the_shared_fields():
     restricted = tb.restrict_to_side(answer("shared"), "B")
 
