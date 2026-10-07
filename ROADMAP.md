@@ -631,6 +631,36 @@ worth running. **Synergy:** depends on item 9's run function; the faithfulness c
 pattern and the calibrate-before-trusting-the-judge methodology both carry over from researching a prior, unfinished
 eval attempt in a sibling project, even though no code from it does.
 
+### 31. Debord corpus moved from the annotated PDF to a plain EPUB
+
+**Status: done, 2026-10-07 (uncommitted); both collections rebuilt locally.** **What:** B's source is now
+`The_Society_of_the_Spectacle_(Knabb_2002)-Guy_Debord.epub` (same Knabb translation; checked against 6 passages
+already verified from the PDF, word for word identical, including "parodies of real dialogue", never recovered
+before). `catalog.py` points B at the new file. `_load_epub` (ingest.py) gained two changes used by both books:
+`_block_text` drops a block that is only a bare number (this edition puts each thesis number in its own `<h3>`,
+separate from its paragraph), and paragraphs are joined with a blank line instead of a single newline, so
+`CharacterTextSplitter` (retrieve.py) has a break point inside a chapter — without it, a chapter with no blank
+lines becomes one oversized, uncontrolled chunk. A third change, `NON_BODY_CHAPTERS`, drops chapters that are not
+the author's own words (title page, contents, index, translator's note), the same reasoning as the editorial-notes
+filter elsewhere: untagged non-authorial text risks being quoted as the author's. **Why:** D5 and more. The
+annotated PDF interleaved Knabb's thesis-by-thesis endnotes into the body text (item 28); this EPUB has no such
+endnotes at all (`cf.`, `quotation from`: 0 occurrences) and structurally separates the thesis number from its
+paragraph, so the defect has no source to come from, instead of being filtered after the fact. **Validated:** 70
+offline tests (3 new in `tests/test_ingest.py` for `_block_text`/`_is_non_body_chapter`). Loader output for B: 10
+chapters (was 14 before the chapter filter), zero split-word or bare-mid-sentence-number occurrences outside of
+three real dates inside Debord's own quoted epigraphs. All 6 known passages are present in the rebuilt parent
+chunks, and a real ensemble-retrieval query returns "opposite of dialogue" in its top results. **Open:** the
+paragraph-join fix applies to `_load_epub` generally, so A was also rebuilt for consistency (1788 children,
+unchanged — the fix had no effect there). Child chunks for B are coarser than the 400-character target for any
+single thesis-paragraph longer than that on its own (median 680, up to ~3100 characters for one long, coherent
+paragraph) — `CharacterTextSplitter` keeps a real paragraph whole rather than cutting it, which items 13/14 already
+accepted as the chosen tradeoff, but this makes the effect more visible for B than it was from the PDF's
+page-driven line breaks. The survey's B outputs (`data/survey/B/`, `summary.json`, and the B embeddings cache) were
+removed as stale, since they were built from the old text; they need a fresh run. The edition is Ken Knabb's 2002
+translation; the title page does not say "2014" or "Annotated" — the wording match suggests the 2014 annotated
+edition is the same translation with notes added, not a different revision, but that is an inference from this
+sample, not confirmed from a source. Backup of the pre-migration index: `data/_backup_before_epub_migration/`.
+
 ### Backlog (deferred, not dropped)
 
 Currently empty — era-annotation and quote-extraction, the only two entries previously here, were promoted into the

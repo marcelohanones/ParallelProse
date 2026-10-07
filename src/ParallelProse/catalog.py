@@ -34,5 +34,5 @@ CATALOG: dict[str, Book] = {
             author="Guy Debord",
             era="1967",
             collection_name="debord_spectacle",
-            file_name="The_Society_of_the_Spectacle_(Annotated Edition)-Guy_Debord.pdf")
+            file_name="The_Society_of_the_Spectacle_(Knabb_2002)-Guy_Debord.epub")
 }

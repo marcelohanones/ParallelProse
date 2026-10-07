@@ -114,6 +114,27 @@ def concat(docs: list[Document], start: int, end: int) -> str:
 
 
 # MARK: EPUB BRANCH
+# Chapters that carry no part of the author's own argument: structural front/back matter (title page, contents,
+# index), or prose that belongs to the translator rather than the author (a translator's note) — comparable to
+# the editorial-notes problem filtered elsewhere, so it is excluded by name here rather than risk a quote later
+# being attributed to the author.
+NON_BODY_CHAPTERS = frozenset({"title page", "half title", "contents", "table of contents", "index",
+                               "translator's note", "cover"})
+
+
+def _block_text(block) -> str | None:
+    """A block's text, or None if it is empty or a bare chapter/thesis number heading (e.g. an edition that puts
+    each thesis number in its own <h3>, separate from the paragraph, still leaves the number itself to filter)."""
+    text = block.get_text().strip()
+    if not text or text.isdigit():
+        return None
+    return text
+
+
+def _is_non_body_chapter(title: str) -> bool:
+    return title.strip().lower().replace("’", "'") in NON_BODY_CHAPTERS
+
+
 def _load_epub(path: str) -> list[Document]:
     """Walk the spine in reading order; each HTML chapter file becomes one Document."""
     book = epub.read_epub(path)
@@ -123,13 +144,17 @@ def _load_epub(path: str) -> list[Document]:
         item = book.get_item_with_id(idref)
         if item is None or item.get_type() != ITEM_DOCUMENT or isinstance(item, epub.EpubNav):
             continue
+        chapter = titles.get(item.get_name(), item.get_name())
+        if _is_non_body_chapter(chapter):
+            continue
         soup = BeautifulSoup(item.get_content(), "html.parser")
         blocks = soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "p", "li"])
-        paragraphs = (b.get_text().strip() for b in blocks)
-        text = "\n".join(p for p in paragraphs if p)
+        paragraphs = (_block_text(b) for b in blocks)
+        # "\n\n" between paragraphs, not "\n": CharacterTextSplitter (retrieve.py) splits on blank lines, and a
+        # single newline gives it no break point inside a chapter, so chunks end up far larger than chunk_size.
+        text = "\n\n".join(p for p in paragraphs if p)
         if not text:
             continue
-        chapter = titles.get(item.get_name(), item.get_name())
         documents.append(Document(page_content=text, metadata={"chapter": chapter}))
     return documents
 
