@@ -1,5 +1,6 @@
 import asyncio
 import json
+from collections import Counter
 
 import pytest
 
@@ -103,6 +104,39 @@ def test_run_theme_batches_stores_both_sides_with_side_is_target(tmp_path, monke
     assert {f["corpus_id"] for f in tagged_bite["answer"]["unique_findings"]} == {"A", "B"}
     assert tagged_bite["side_is_target"] == {"A": True, "B": False}
     assert shared_bite["side_is_target"] == {"A": None, "B": None}
+
+
+def test_flagged_words_drops_stopwords_and_short_words():
+    assert tb.flagged_words("Why is the auditor not called on to relieve?") == ["auditor", "called", "relieve"]
+
+
+def test_vocabulary_report_flags_a_word_missing_from_its_tagged_book_only():
+    themes = tb.parse_batch("Theme 1: T\nThesis 1.1: x\n  Query 1.1a[A]: ponticianus and the garden\n")
+    vocab = {"A": Counter({"garden": 3, "pontitianus": 4}), "B": Counter({"garden": 1})}
+
+    report = tb.vocabulary_report(themes, vocab)
+
+    assert '[A] "ponticianus" not found' in report
+    assert 'Nearest: "pontitianus" (4)' in report
+    assert "[B]" not in report  # untagged books are not checked for a tagged query
+
+
+def test_vocabulary_report_checks_an_untagged_query_against_every_book():
+    themes = tb.parse_batch("Theme 1: T\nThesis 1.1: x\n  Query 1.1a: xyzxyz in the garden\n")
+    vocab = {"A": Counter({"garden": 3}), "B": Counter({"garden": 1})}
+
+    report = tb.vocabulary_report(themes, vocab)
+
+    assert '[A] "xyzxyz" not found' in report
+    assert '[B] "xyzxyz" not found' in report
+
+
+def test_vocabulary_report_says_so_when_nothing_is_flagged():
+    themes = tb.parse_batch("Theme 1: T\nThesis 1.1: x\n  Query 1.1a: the garden\n")
+
+    report = tb.vocabulary_report(themes, {"A": Counter({"garden": 1}), "B": Counter({"garden": 1})})
+
+    assert report == "# Vocabulary check\n\nNo flagged words.\n"
 
 
 def test_slugify_is_ascii_hyphenated_and_capped():

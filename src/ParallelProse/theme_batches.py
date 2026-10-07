@@ -3,6 +3,7 @@ import json
 import re
 import sys
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -10,8 +11,9 @@ from pathlib import Path
 from ParallelProse.agent import ComposerAnswer, run_query
 from ParallelProse.catalog import CATALOG, DATA_DIR
 from ParallelProse.consolidate_thesis import consolidate_thesis_file
-from ParallelProse.quote_check import select_quotes, verified_flags, verify_quotes
+from ParallelProse.quote_check import STOPWORDS, select_quotes, verified_flags, verify_quotes
 from ParallelProse.synthesis import save_bite
+from ParallelProse.vocabulary import load_vocabulary, lookup
 
 PROJECT = "augustine_debord"
 BATCHES_PATH = DATA_DIR / "theme_batches"
@@ -87,6 +89,39 @@ def retrieval_diagnostics(corpora: dict) -> dict[str, dict]:
             for cid, slot in corpora.items()}
 
 
+QUERY_WORD = re.compile(r"[a-z]+")
+
+
+def flagged_words(query: str) -> list[str]:
+    """The query's own content words (stopwords and short words dropped), to check against a book's vocabulary."""
+    return sorted({w for w in QUERY_WORD.findall(query.lower()) if len(w) > 2 and w not in STOPWORDS})
+
+
+def vocabulary_report(themes: list[Theme], vocabularies: dict[str, Counter]) -> str:
+    """A mechanical, zero-LLM pre-flight check: for every query, each of its own content words that does not
+    exist in its target book(s), with the nearest word that book actually has. An untagged query is checked
+    against every book; a tagged twin only against its own tagged book. Runs on the batch text alone, before
+    anything is submitted to the pipeline — no retrieval, no LLM call, no cost beyond tokenizing."""
+    sections = []
+    for theme in themes:
+        for thesis in theme.theses:
+            for label, query, side in thesis.queries:
+                books = [side] if side else sorted(vocabularies)
+                flags = [(cid, lookup(word, vocabularies[cid]))
+                         for cid in books for word in flagged_words(query)
+                         if not lookup(word, vocabularies[cid])["exists"]]
+                if flags:
+                    lines = [f"## {label} — {query}"]
+                    for cid, result in flags:
+                        nearest = ", ".join(f'"{n["word"]}" ({n["count"]})' for n in result["nearest"])
+                        lines.append(f'- [{cid}] "{result["term"]}" not found.' +
+                                    (f" Nearest: {nearest}." if nearest else " No close match in this book."))
+                    sections.append("\n".join(lines))
+    if not sections:
+        return "# Vocabulary check\n\nNo flagged words.\n"
+    return "# Vocabulary check\n\n" + "\n\n".join(sections) + "\n"
+
+
 async def run_theme_batches(batch_file: Path) -> Path:
     text = batch_file.read_text()
     themes = parse_batch(text)
@@ -131,4 +166,9 @@ async def run_theme_batches(batch_file: Path) -> Path:
 
 
 if __name__ == "__main__":
-    print(asyncio.run(run_theme_batches(Path(sys.argv[1]))))
+    if sys.argv[1] == "--check":
+        batch_text = Path(sys.argv[2]).read_text()
+        vocabularies = {cid: load_vocabulary(cid) for cid in CATALOG}
+        print(vocabulary_report(parse_batch(batch_text), vocabularies))
+    else:
+        print(asyncio.run(run_theme_batches(Path(sys.argv[1]))))

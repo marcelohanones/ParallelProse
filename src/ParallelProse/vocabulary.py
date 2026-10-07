@@ -46,14 +46,38 @@ def lookup(term: str, vocabulary: Counter, max_suggestions: int = 3) -> dict:
             "nearest": [{"word": w, "count": vocabulary[w]} for w in close]}
 
 
+def distinctive_words(vocabulary: Counter, limit: int = 200) -> list[tuple[str, int]]:
+    """The book's own most frequent content words (stopwords dropped), as a flavor of its register — for a
+    reference document handed over whole, before any query is written. Not exhaustive: a word missing here can
+    still exist in the book; it just is not among the `limit` most frequent."""
+    from ParallelProse.quote_check import STOPWORDS
+    return [(w, c) for w, c in vocabulary.most_common() if len(w) > 2 and w not in STOPWORDS][:limit]
+
+
+def write_reference_document(cid: str, vocabulary: Counter, output_dir: Path = VOCABULARY_DIR,
+                             limit: int = 200) -> Path:
+    """A standalone .md, handed to Claude web whole, before it writes a single query — not a lookup to query us
+    for, word by word."""
+    lines = [f"# {CATALOG[cid].book_title} — {limit} most frequent words", "",
+             "The book's own most frequent content words, ranked by how often each occurs in it. Use these to "
+             "gauge the book's own register before phrasing a query in it. A word absent from this list may "
+             "still exist in the book; this is the most frequent slice, not the whole vocabulary.", ""]
+    lines += [f"- {word} ({count})" for word, count in distinctive_words(vocabulary, limit)]
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / f"{cid}_reference.md"
+    path.write_text("\n".join(lines))
+    return path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Per-book vocabulary: build the index, or look up terms in it.")
     parser.add_argument("book", choices=sorted(CATALOG))
     parser.add_argument("terms", nargs="*", help="words to look up; with none, (re)builds and saves the index")
     args = parser.parse_args()
     if not args.terms:
-        path = save_vocabulary(args.book, build_vocabulary(args.book))
-        print(path)
+        counts = build_vocabulary(args.book)
+        print(save_vocabulary(args.book, counts))
+        print(write_reference_document(args.book, counts))
         return
     vocabulary = load_vocabulary(args.book)
     for term in args.terms:

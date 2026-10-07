@@ -684,6 +684,32 @@ away. **Validated:** suite passes, 69 tests (was 70; the test exercising `Unknow
 or a mechanical gap-check built on the survey's discovery/reference-set machinery instead of an LLM judgment.
 `README.md` and this file's own item 17 text were annotated, not rewritten, to point here.
 
+### 33. Per-book vocabulary: a static index, a reference document, and a free pre-flight check
+
+**Status: done, 2026-10-07 (uncommitted).** **What:** new module `src/ParallelProse/vocabulary.py`, decoupled from
+`survey.py` on purpose — `survey.py`'s concern is whether a theme is covered, this module's is whether one exact
+word exists. `build_vocabulary(cid)` tokenizes `load_corpus`'s text directly (no embedding, no LLM); `save_vocabulary`
+/`load_vocabulary` persist it to `data/vocabulary/<book>.json`; `lookup(term, vocabulary)` returns exists/count, and
+when absent, the book's own nearest real spellings (`difflib`, never an external dictionary). `distinctive_words`/
+`write_reference_document` render the 200 most frequent content words (stopwords dropped) to
+`data/vocabulary/<book>_reference.md`, meant to be handed to Claude web whole, before it writes a query. A second
+piece, `vocabulary_report` (`theme_batches.py`), reads a batch file's text alone — not the pipeline, not an LLM —
+and flags each query's content words absent from its target book(s), with the book's nearest real word; a tagged
+twin query is checked only against its own book, an untagged one against both. CLI: `python -m ParallelProse.
+vocabulary <book> [terms...]` (no terms: rebuilds the index and the reference doc) and `python -m
+ParallelProse.theme_batches --check <batch.md>`. **Why:** raised by Claude web, discussed with the user, who
+rejected any protocol where Claude web asks a word-by-word question relayed by the user ("garimpo") — not a
+fallback, off the table entirely. The real split is: a document handed over before any query (this item's
+reference doc), and, when Claude web still writes a word the book does not have, whether the correction is cheap
+(this item's mechanical report) or expensive (an LLM rewrite — `translate.py`, designed, not built). **Validated:**
+80 offline tests (`tests/test_vocabulary.py`, `tests/test_theme_batches.py`). Indexes and reference docs built for
+A and B (203 lines each). `--check` run on a real past batch (v6, `2026-10-05_2153/source.md`) caught the actual
+"Ponticianus" misspelling from that round, suggesting "pontitianus" (the book's real spelling, 4 occurrences) — the
+same fix that took a full evaluation round to surface, now free, instant, and before any query is submitted.
+**Open:** the per-theme half of the vocabulary lag (vocabulary discovered while surveying a theme, exposed as soon
+as that theme's first query is processed, not only at the end of a whole batch) still needs the automatic-discovery
+survey to exist; `translate.py`'s LLM rewrite is still not built.
+
 ### Backlog (deferred, not dropped)
 
 Currently empty — era-annotation and quote-extraction, the only two entries previously here, were promoted into the

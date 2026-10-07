@@ -1,7 +1,7 @@
 import json
 from collections import Counter
 
-from ParallelProse.vocabulary import load_vocabulary, lookup, save_vocabulary
+from ParallelProse.vocabulary import distinctive_words, load_vocabulary, lookup, save_vocabulary, write_reference_document
 
 VOCAB = Counter({"spectacle": 12, "commodity": 5, "separation": 3})
 
@@ -32,3 +32,24 @@ def test_save_and_load_vocabulary_round_trip(tmp_path):
     assert path == tmp_path / "A.json"
     assert json.loads(path.read_text()) == dict(VOCAB)
     assert load_vocabulary("A", input_dir=tmp_path) == VOCAB
+
+
+def test_distinctive_words_drops_stopwords_and_short_words_and_ranks_by_frequency():
+    vocab = Counter({"spectacle": 12, "the": 500, "of": 400, "is": 20, "commodity": 5})
+
+    assert distinctive_words(vocab) == [("spectacle", 12), ("commodity", 5)]
+
+
+def test_distinctive_words_respects_the_limit():
+    vocab = Counter({"spectacle": 12, "commodity": 5, "separation": 3})
+
+    assert distinctive_words(vocab, limit=2) == [("spectacle", 12), ("commodity", 5)]
+
+
+def test_write_reference_document_lists_words_with_counts(tmp_path):
+    path = write_reference_document("A", VOCAB, output_dir=tmp_path, limit=10)
+
+    assert path == tmp_path / "A_reference.md"
+    text = path.read_text()
+    assert "spectacle (12)" in text
+    assert "The Confessions of Saint Augustine" in text
