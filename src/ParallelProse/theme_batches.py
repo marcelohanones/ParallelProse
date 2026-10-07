@@ -9,10 +9,9 @@ from pathlib import Path
 
 from ParallelProse.agent import ComposerAnswer, run_query
 from ParallelProse.catalog import CATALOG, DATA_DIR
-from ParallelProse.consolidate_synthesis import consolidate_synthesis_file
+from ParallelProse.consolidate_thesis import consolidate_thesis_file
 from ParallelProse.quote_check import select_quotes, verified_flags, verify_quotes
-from ParallelProse.synthesis import (UnknownBiteLabelError, load_bites, save_bite, save_synthesis,
-                                     save_synthesis_error, synthesize)
+from ParallelProse.synthesis import save_bite
 
 PROJECT = "augustine_debord"
 BATCHES_PATH = DATA_DIR / "theme_batches"
@@ -123,16 +122,12 @@ async def run_theme_batches(batch_file: Path) -> Path:
                     "verification": quote_details,
                     "retrieval": retrieval_diagnostics(result["corpora"]),
                 })
-            if thesis.queries:
-                _, _, bites = load_bites(path)
-                bites = [(label, q, restrict_to_side(a, side) if side else a)
-                         for (q, a), (label, _, side) in zip(bites, thesis.queries)]
-                try:
-                    save_synthesis(path, synthesize(theme.title, thesis.text, bites))
-                except UnknownBiteLabelError as error:
-                    save_synthesis_error(path, str(error))  # this thesis is recorded as failed; the run continues
+            # synthesize() is disabled here on purpose: nine evaluation rounds (v3-v9) never used its claims or
+            # uncovered_angle (quotes only ever came from thesis.json's bites), so item 12's own bar — "deferred
+            # until the manual version proves useful" — came back negative. synthesize()/synthesis.py are kept,
+            # unused, in case a cheaper mechanical gap-check (built on the survey) replaces this later.
 
-    return consolidate_synthesis_file(session)
+    return consolidate_thesis_file(session)
 
 
 if __name__ == "__main__":

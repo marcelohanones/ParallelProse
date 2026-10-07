@@ -39,21 +39,16 @@ The batch already writes the consolidated file when it finishes. To rebuild it f
 after a session folder is edited, run:
 
 ```
-.venv/bin/python -m ParallelProse.consolidate_synthesis data/theme_batches/<project>/<timestamp>
-```
-
-It writes `<timestamp>_synthesis.json` into the session folder, with every thesis's synthesis under its theme. Inside
-Claude Code, `/consolidate-session <session folder>` runs the same command.
-
-To flatten every thesis file in a session into one list, run:
-
-```
 .venv/bin/python -m ParallelProse.consolidate_thesis data/theme_batches/<project>/<timestamp>
 ```
 
 It writes `<timestamp>_thesis.json` into the session folder. The file opens with a `books` mapping (letter to book
 title, taken from the session's `manifest.json`), then a `theses` list where each entry carries its `theme_folder`,
-`file`, and the thesis's full contents: `theme`, `thesis`, `bites`, and `synthesis`.
+`file`, and the thesis's full contents: `theme`, `thesis`, `bites`.
+
+`synthesize()` is disabled (see roadmap item 12): nine evaluation rounds never used its claims or gap-finding, so new
+sessions have no `synthesis` key. `ParallelProse.consolidate_synthesis` and `/consolidate-session` still read an
+existing `synthesis` key for older sessions that have one, but produce nothing new on a session built since then.
 
 To count how many queries are one-sided (one book silent) in the newest session:
 

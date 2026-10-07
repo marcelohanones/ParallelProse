@@ -433,7 +433,8 @@ code correctness — it benefits from running against code that's already covere
 
 **Status: done, 2026-10-05.** Parser and runner in `ParallelProse.theme_batches` (offline tests, plus one real run on a one-query file). **What:** `run_theme_batches(batch_file)` reads a Claude web output file (the batch format in
 `docs/claude_web_query_brief.md`: themes, each with its theses and their queries), then runs each theme's queries
-through `run_query`, saves every answer with `save_bite`, and synthesizes each thesis with `synthesize`. Each
+through `run_query`, saves every answer with `save_bite`, and synthesizes each thesis with `synthesize`
+(disabled since item 32; a new session has no `synthesis` key). Each
 theme is its own folder, and a single file can hold any number of themes. **Why:** the subjectivism sweep needs
 many themes at once, and running them by hand doesn't scale. **Depends on:** item 12 (`save_bite`, `load_bites`,
 `synthesize`).
@@ -660,6 +661,28 @@ removed as stale, since they were built from the old text; they need a fresh run
 translation; the title page does not say "2014" or "Annotated" — the wording match suggests the 2014 annotated
 edition is the same translation with notes added, not a different revision, but that is an inference from this
 sample, not confirmed from a source. Backup of the pre-migration index: `data/_backup_before_epub_migration/`.
+
+### 32. `synthesize()` disabled — its own bar, tested and not met
+
+**Status: done, 2026-10-07 (uncommitted).** **What:** `run_theme_batches` no longer calls `synthesize`,
+`save_synthesis`, or `save_synthesis_error`. A session's thesis files carry only their bites; no `synthesis` or
+`synthesis_error` key is written. The return value of `run_theme_batches` is `consolidate_thesis_file`'s output
+(`<timestamp>_thesis.json`), not `consolidate_synthesis_file`'s. `synthesis.py`, `consolidate_synthesis.py`, and
+`restrict_to_side` (theme_batches.py) are kept, unused, rather than deleted. **Why:** item 12 set its own bar at
+the time it was built — "manual-first by design — automatic chasing is deliberately deferred until the manual
+version proves useful" — and nine evaluation rounds (v3-v9) are the test of that bar. The result: `claims` and
+`candidate_query` were never quoted or acted on (the citation bank and every query decision came from reading
+`thesis.json`'s bites directly); `uncovered_angle` repeatedly claimed a gap that the bites already covered
+(crowd, Debord's self-recognition passage, a secular book's "silence" on sin treated as a gap); `agreement`/
+`disagreement` were templated and leaked between queries (S1-S5, sections 5 and 15 of the evaluation). The
+vocabulary problem `synthesize` was partly meant to compensate for is now being addressed upstream, by the
+survey/translation work, which narrows its would-be job further without making its own reasoning defects go
+away. **Validated:** suite passes, 69 tests (was 70; the test exercising `UnknownBiteLabelError` end to end through
+`run_theme_batches` was removed, since that path no longer runs — `tests/test_synthesis.py` still tests
+`unknown_bite_ids` directly, since `synthesis.py` itself is unchanged).
+**Open:** two replacements were discussed and not chosen yet: keeping only a (separately validated) gap-check,
+or a mechanical gap-check built on the survey's discovery/reference-set machinery instead of an LLM judgment.
+`README.md` and this file's own item 17 text were annotated, not rewritten, to point here.
 
 ### Backlog (deferred, not dropped)
 
