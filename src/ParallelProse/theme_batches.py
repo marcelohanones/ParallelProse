@@ -3,7 +3,6 @@ import json
 import re
 import sys
 import unicodedata
-from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -11,9 +10,7 @@ from pathlib import Path
 from ParallelProse.agent import ComposerAnswer, run_query
 from ParallelProse.catalog import CATALOG, DATA_DIR
 from ParallelProse.consolidate_thesis import consolidate_thesis_file
-from ParallelProse.quote_check import STOPWORDS, select_quotes, verified_flags, verify_quotes
-from ParallelProse.synthesis import save_bite
-from ParallelProse.vocabulary import load_vocabulary, lookup
+from ParallelProse.quote_check import select_quotes, verified_flags, verify_quotes
 
 PROJECT = "augustine_debord"
 BATCHES_PATH = DATA_DIR / "theme_batches"
@@ -72,10 +69,14 @@ def slugify(title: str, limit: int = 40) -> str:
     return slug[:limit].rstrip("-")
 
 
-def restrict_to_side(answer: ComposerAnswer, side: str) -> ComposerAnswer:
-    """Keeps only one book's unique findings and blanks the shared agreement/disagreement, for a query tagged with that book."""
-    return ComposerAnswer(agreement="", disagreement="",
-                          unique_findings=[f for f in answer.unique_findings if f.corpus_id == side])
+def save_bite(path: Path, theme: str, thesis: str, query: str, answer: ComposerAnswer, extra: dict | None = None) -> None:
+    """Appends one finished bite to the thesis file at path, creating it with theme/thesis if it doesn't exist yet. `extra` is stored beside the answer, never inside it."""
+    if not path.exists():
+        session = {"theme": theme, "thesis": thesis, "bites": []}
+    else:
+        session = json.loads(path.read_text())
+    session["bites"].append({"query": query, "answer": answer.model_dump(), **(extra or {})})
+    path.write_text(json.dumps(session, indent=2))
 
 
 def side_is_target(answer: ComposerAnswer, side: str | None) -> dict[str, bool | None]:
@@ -87,39 +88,6 @@ def retrieval_diagnostics(corpora: dict) -> dict[str, dict]:
     """Per book, the label, reason and tool-call lineage the retrieval loop ended with for this query."""
     return {cid: {"label": slot["label"], "reason": slot["reason"], "lineage": slot["lineage"]}
             for cid, slot in corpora.items()}
-
-
-QUERY_WORD = re.compile(r"[a-z]+")
-
-
-def flagged_words(query: str) -> list[str]:
-    """The query's own content words (stopwords and short words dropped), to check against a book's vocabulary."""
-    return sorted({w for w in QUERY_WORD.findall(query.lower()) if len(w) > 2 and w not in STOPWORDS})
-
-
-def vocabulary_report(themes: list[Theme], vocabularies: dict[str, Counter]) -> str:
-    """A mechanical, zero-LLM pre-flight check: for every query, each of its own content words that does not
-    exist in its target book(s), with the nearest word that book actually has. An untagged query is checked
-    against every book; a tagged twin only against its own tagged book. Runs on the batch text alone, before
-    anything is submitted to the pipeline — no retrieval, no LLM call, no cost beyond tokenizing."""
-    sections = []
-    for theme in themes:
-        for thesis in theme.theses:
-            for label, query, side in thesis.queries:
-                books = [side] if side else sorted(vocabularies)
-                flags = [(cid, lookup(word, vocabularies[cid]))
-                         for cid in books for word in flagged_words(query)
-                         if not lookup(word, vocabularies[cid])["exists"]]
-                if flags:
-                    lines = [f"## {label} — {query}"]
-                    for cid, result in flags:
-                        nearest = ", ".join(f'"{n["word"]}" ({n["count"]})' for n in result["nearest"])
-                        lines.append(f'- [{cid}] "{result["term"]}" not found.' +
-                                    (f" Nearest: {nearest}." if nearest else " No close match in this book."))
-                    sections.append("\n".join(lines))
-    if not sections:
-        return "# Vocabulary check\n\nNo flagged words.\n"
-    return "# Vocabulary check\n\n" + "\n\n".join(sections) + "\n"
 
 
 async def run_theme_batches(batch_file: Path) -> Path:
@@ -157,18 +125,9 @@ async def run_theme_batches(batch_file: Path) -> Path:
                     "verification": quote_details,
                     "retrieval": retrieval_diagnostics(result["corpora"]),
                 })
-            # synthesize() is disabled here on purpose: nine evaluation rounds (v3-v9) never used its claims or
-            # uncovered_angle (quotes only ever came from thesis.json's bites), so item 12's own bar — "deferred
-            # until the manual version proves useful" — came back negative. synthesize()/synthesis.py are kept,
-            # unused, in case a cheaper mechanical gap-check (built on the survey) replaces this later.
 
     return consolidate_thesis_file(session)
 
 
 if __name__ == "__main__":
-    if sys.argv[1] == "--check":
-        batch_text = Path(sys.argv[2]).read_text()
-        vocabularies = {cid: load_vocabulary(cid) for cid in CATALOG}
-        print(vocabulary_report(parse_batch(batch_text), vocabularies))
-    else:
-        print(asyncio.run(run_theme_batches(Path(sys.argv[1]))))
+    print(asyncio.run(run_theme_batches(Path(sys.argv[1]))))

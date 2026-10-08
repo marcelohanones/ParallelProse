@@ -46,39 +46,6 @@ It writes `<timestamp>_thesis.json` into the session folder. The file opens with
 title, taken from the session's `manifest.json`), then a `theses` list where each entry carries its `theme_folder`,
 `file`, and the thesis's full contents: `theme`, `thesis`, `bites`.
 
-`synthesize()` is disabled (see roadmap item 32): nine evaluation rounds never used its claims or gap-finding, so new
-sessions have no `synthesis` key. `ParallelProse.consolidate_synthesis` and `/consolidate-session` still read an
-existing `synthesis` key for older sessions that have one, but produce nothing new on a session built since then.
-
-## Checking a book's vocabulary before a batch
-
-Before writing or submitting a batch, build (or refresh, after the corpus file itself changes) each book's
-vocabulary:
-
-```
-.venv/bin/python -m ParallelProse.vocabulary A
-.venv/bin/python -m ParallelProse.vocabulary B
-```
-
-This reads straight from `load_corpus` — no embedding, no LLM, so it never waits on any theme or query round. It
-writes two files per book under `data/vocabulary/`: `<book>.json` (every word in the book, lowercased, with how
-many times it occurs) and `<book>_reference.md` (its 200 most frequent content words, stopwords dropped). The
-`_reference.md` is meant to be handed to Claude web whole, as a file, before it writes a single query — not a
-question it asks, and not something it has to read in full to be useful.
-
-Before a batch actually runs, check it for free:
-
-```
-.venv/bin/python -m ParallelProse.theme_batches --check data/theme_batches/<batch file>.md
-```
-
-This reads only the batch text and the two saved vocabulary files — no retrieval, no LLM call, no pipeline run. For
-every query, it flags each of its own content words that is absent from its target book, together with that book's
-own nearest real word (by spelling, never a dictionary). An untagged query is checked against both books; a tagged
-twin (`Query N.Ma[A]:` / `[B]`) only against its own tagged book. This catches a wrong spelling or an invented
-inflection before any cost is spent — it does not catch a wording that exists but describes the wrong scene, or a
-whole theme the book barely covers; those are the still-unbuilt per-theme survey's job, not this check's.
-
 To count how many queries are one-sided (one book silent) in the newest session:
 
 ```
