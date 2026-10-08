@@ -379,7 +379,7 @@ system, not a prerequisite for either of those, which cover the graph as it stan
 
 ### 13. BM25 searches the same chunks as the vector store
 
-**Status: done, validated, 2026-10-05 (uncommitted at time of writing).** **What:** `make_bm_25_retriever`
+**Status: done, validated, 2026-10-05.** **What:** `make_bm_25_retriever`
 (retrieve.py) indexed `load_corpus` output, one document per chapter, so keyword hits came back as whole chapters, up
 to 90,626 characters. It now indexes the vector store's own 400-character children and maps each hit to its
 4,000-character parent (`parents_of`, via `doc_id` into the docstore), the same unit the semantic tool returns.
@@ -471,7 +471,7 @@ to address. Label leniency is still open (item 30).
 
 ### 18. Thesis consolidator — one flat file per session
 
-**Status: done, 2026-10-05 (uncommitted).** **What:** `consolidate_thesis_file(session_dir)`
+**Status: done, 2026-10-05.** **What:** `consolidate_thesis_file(session_dir)`
 (`ParallelProse.consolidate_thesis`, run as `python -m ParallelProse.consolidate_thesis <session folder>`) writes
 `<timestamp>_thesis.json` at the session root. It holds `session`, then `books` (letter to title, from the session's
 `manifest.json`), then `theses`: one entry per thesis file, carrying `theme_folder`, `file`, and the thesis file's full
@@ -480,7 +480,7 @@ layout gives one place to read a whole session's evidence. **Tests:** `tests/tes
 
 ### 19. Synthesis consolidator renamed to `consolidate_synthesis`
 
-**Status: done, 2026-10-05 (uncommitted); removed 2026-10-08, see item 34.** **What:** `consolidate.py` became `consolidate_synthesis.py`, and
+**Status: done, 2026-10-05; removed 2026-10-08, see item 34.** **What:** `consolidate.py` became `consolidate_synthesis.py`, and
 `consolidate_session` became `consolidate_synthesis_file`. The output is unchanged (`<timestamp>_synthesis.json`).
 Updated: `theme_batches.py`, the test file (now `tests/test_consolidate_synthesis.py`), the README, the
 `/consolidate-session` command, and the item 17 text. **Why:** the module name now matches the thesis consolidator
@@ -488,7 +488,7 @@ Updated: `theme_batches.py`, the test file (now `tests/test_consolidate_synthesi
 
 ### 20. Twin queries — side tag in the batch format
 
-**Status: done, 2026-10-05 (uncommitted).** **What:** a query line may carry a book tag between its letter and the
+**Status: done, 2026-10-05.** **What:** a query line may carry a book tag between its letter and the
 colon: `Query N.Ma[A]:` or `Query N.Ma[B]:`. `parse_batch` reads the tag into the query tuple, outside the query text
 sent to retrieval, and rejects a tag that is not a key of `CATALOG`. Before synthesis, `restrict_to_side` keeps only the
 tagged book's unique findings and blanks the shared `agreement` and `disagreement`; untagged queries pass through
@@ -498,7 +498,7 @@ v5 and v6 ran with this filter active.
 
 ### 21. Quote verification — `verified` per book
 
-**Status: done, 2026-10-05 (uncommitted).** **What:** `verify_quotes` (now in `quote_check.py`, see item 27) stores `verified` on every
+**Status: done, 2026-10-05.** **What:** `verify_quotes` (now in `quote_check.py`, see item 27) stores `verified` on every
 bite: for each book, `true` if its quote appears in that book's retrieved chunks, `false` if not, `null` if the book has
 no quote. Whitespace and case are ignored. **Why:** a defect. Quotes come from the composer's LLM with no check, and
 in v5 only 3 of 10 Debord quotes appeared verbatim in the source text (4 had joined spans with ellipses, 3 were not
@@ -508,7 +508,7 @@ v5 and v6 have no `verified` field.
 
 ### 22. Debord PDF: layout extraction and reindex
 
-**Status: done, 2026-10-05 (uncommitted); Debord collection rebuilt locally.** **What (its layout-mode reading is superseded by item 28):** `_pdf_pages` (`ingest.py`)
+**Status: done, 2026-10-05; Debord collection rebuilt locally.** **What (its layout-mode reading is superseded by item 28):** `_pdf_pages` (`ingest.py`)
 replaces `PyPDFLoader` for the PDF branch. It reads each page in pypdf's layout mode and falls back to plain extraction
 when layout mode raises `IndexError` (5 pages in this PDF). It also collapses runs of spaces. The Debord collection was
 rebuilt with `add_parent_child_docs(rebuild=True)`: 854 child chunks (was 890). The previous index is kept at
@@ -517,18 +517,19 @@ rebuilt with `add_parent_child_docs(rebuild=True)`: 854 child chunks (was 890). 
 occurrences to 2, and "spectacle" from 4 to 1. "represen tation" still appears 4 times. Augustine's collection was not
 touched. **Open:** the 5 plain-fallback pages can still carry split words. `mcp_tools.py` calls
 `add_parent_child_docs()` without `rebuild=True`, so a later loader change needs an explicit rebuild. Debord quotes in
-older sessions come from the old index.
+older sessions come from the old index. *Closed: B loads from an EPUB since item 31; the PDF repair code and the
+backups were removed in item 35.*
 
 ### 23. Both sides stored, with `side_is_target`
 
-**Status: done, 2026-10-05 (uncommitted).** **What:** each bite keeps the full answer for both books, as before, and
+**Status: done, 2026-10-05.** **What:** each bite keeps the full answer for both books, as before, and
 adds `side_is_target`: per book, `true` or `false` for a tagged twin, `null` for an untagged query. The synthesis input
 is unchanged from item 20. **Why:** a decision of the project owner. A clean quote from the non-target book (v5 query
 2.1b) should stay available to the consumer. The synthesis keeps using the tagged side only.
 
 ### 24. Retrieval diagnostics per bite — `retrieval`
 
-**Status: done, 2026-10-05 (uncommitted). Diagnostic, not a fix.** **What:** each bite stores `retrieval`: per book,
+**Status: done, 2026-10-05. Diagnostic, not a fix.** **What:** each bite stores `retrieval`: per book,
 `label`, `reason`, and `lineage` (tool calls with their arguments and `forced_retriever`), taken from the final state
 of `run_query`. **Why:** to inspect the `silent` and `miss` verdicts. The code has no numeric relevance threshold:
 `silent` is the output of `reflect`'s LLM, guided by its prompt. **Validated:** not yet on a real run. Bites from v5
@@ -536,7 +537,7 @@ and v6 have no `retrieval` field.
 
 ### 25. Brief: vocabulary, twins, and known wording
 
-**Status: done, 2026-10-05 (uncommitted).** **What:** `docs/claude_web_query_brief.md` now has: a vocabulary section
+**Status: done, 2026-10-05.** **What:** `docs/claude_web_query_brief.md` now has: a vocabulary section
 that is agnostic (match each book's own words; choose the query shape by what the books share; cautions about word
 senses, inflections, and remembered quotations); a twin section that states what the stored result keeps and what the
 synthesis receives; and a rule to quote the exact wording of a passage when that wording is known and matches the edition
@@ -546,7 +547,7 @@ advice for a given book stays out of the file.
 
 ### 26. Synthesis cites bites by label, not by query text
 
-**Status: done, 2026-10-06 (uncommitted).** **What:** `synthesize` takes `(label, query, answer)` triples. The
+**Status: done, 2026-10-06.** **What:** `synthesize` takes `(label, query, answer)` triples. The
 label is the batch label of the query (`1.1a`), and the prompt shows it as `[1.1a] Query: ...`. `based_on` and
 `uncovered_angle.checked_bites` hold labels. `unknown_bite_ids` (`synthesis.py`) lists any cited label that was not
 given, and `synthesize` raises `UnknownBiteLabelError` on one, so a stray id cannot pass silently. `run_theme_batches`
@@ -557,11 +558,11 @@ text; `load_bites` and `save_bite` are unchanged. **Why:** a defect. In v6 the m
 (`tests/test_synthesis.py`), a run test where a failing thesis is recorded and the next one still synthesizes, and the full suite (38 passing). Two real syntheses on v5 theses (one bite, and three bites):
 every cited label was a known label. **Found on the first real attempt:** the model cited `Bite 6.1a`, copying the
 prefix from the first rendering. The rendering was changed to the bare bracketed label and the prompt now says to cite
-that label exactly. **Open:** existing `*_synthesis.json` files still hold query text; they are not re-synthesized, by decision.
+that label exactly. **Open:** existing `*_synthesis.json` files still hold query text; they are not re-synthesized, by decision. *Moot: synthesis was removed in item 34.*
 
 ### 27. Quote verification states why a quote fails
 
-**Status: done, 2026-10-06 (uncommitted).** **What:** verification moved to `quote_check.py`. `normalize_text` folds
+**Status: done, 2026-10-06.** **What:** verification moved to `quote_check.py`. `normalize_text` folds
 NFKC forms, case, whitespace, dash and quote variants, and drops soft hyphens (U+00AD) that the PDF leaves at line
 breaks. `verify_quotes(answer, corpora, query)` returns, per book, a `status`: `verbatim`, `echo_of_query` (the quote
 is the query itself), `differs_only_by_corpus_numbers` (matches once the corpus's bare thesis numbers are ignored),
@@ -579,7 +580,7 @@ have no `verification` field; `retrieval_query` (the search string actually sent
 
 ### 28. Quote matching: prefix and fragment; Debord text in plain order, with split words repaired
 
-**Status: done, 2026-10-06 (uncommitted).** **What:** (a) `quote_check.py` compares quotes in a form where quote marks are
+**Status: done, 2026-10-06.** **What:** (a) `quote_check.py` compares quotes in a form where quote marks are
 removed and the quote's trailing punctuation is ignored, on both sides of the comparison (`match_form`). Punctuation
 inside the quote still counts. (b) Two new statuses: `prefix` (the quote opens a longer sentence) and `fragment` (the
 quote sits inside one). Each carries `quote_full`, the whole sentence as written. Both count as verified, like `verbatim`.
@@ -597,11 +598,12 @@ join a word whose whole form never occurs intact; `KNOWN_PDF_SPLITS` has to be e
 dictionary joined "united states" and "few days"). Knabb's margin notes are still in the body text, as separate
 passages. Quote selection still picks a neighbouring sentence, and an echoed quote is not re-selected. Backups of the
 earlier indexes are in `data/_backup_before_debord_reindex/` and `data/_backup_before_desplit/`. Bites from v9 and earlier
-were verified against the text they were produced with.
+were verified against the text they were produced with. *Closed: the PDF notes by item 31 (EPUB, no margin notes),
+quote selection by item 29; the split-word code and these backups were removed in item 35.*
 
 ### 29. Quote selection: the sentence that shares the query's terms replaces the composer's neighbour
 
-**Status: done, 2026-10-06 (uncommitted).** **What:** `select_quotes` (`quote_check.py`) runs in `run_theme_batches` before
+**Status: done, 2026-10-06.** **What:** `select_quotes` (`quote_check.py`) runs in `run_theme_batches` before
 verification. For each target book (the tagged side of a twin, or both books of an untagged query), the composer's quote
 is replaced by the sentence of that book's retrieved chunks that shares the most query content terms, when that sentence
 scores strictly higher. A term weighs more the rarer it is among the book's sentences. A replacement needs at least two
@@ -634,7 +636,7 @@ eval attempt in a sibling project, even though no code from it does.
 
 ### 31. Debord corpus moved from the annotated PDF to a plain EPUB
 
-**Status: done, 2026-10-07 (uncommitted); both collections rebuilt locally.** **What:** B's source is now
+**Status: done, 2026-10-07; both collections rebuilt locally.** **What:** B's source is now
 `The_Society_of_the_Spectacle_(Knabb_2002)-Guy_Debord.epub` (same Knabb translation; checked against 6 passages
 already verified from the PDF, word for word identical, including "parodies of real dialogue", never recovered
 before). `catalog.py` points B at the new file. `_load_epub` (ingest.py) gained two changes used by both books:
@@ -660,11 +662,12 @@ page-driven line breaks. The survey's B outputs (`data/survey/B/`, `summary.json
 removed as stale, since they were built from the old text; they need a fresh run. The edition is Ken Knabb's 2002
 translation; the title page does not say "2014" or "Annotated" — the wording match suggests the 2014 annotated
 edition is the same translation with notes added, not a different revision, but that is an inference from this
-sample, not confirmed from a source. Backup of the pre-migration index: `data/_backup_before_epub_migration/`.
+sample, not confirmed from a source. Backup of the pre-migration index: `data/_backup_before_epub_migration/` (removed in item 35, with the rest of
+`data/survey/`).
 
 ### 32. `synthesize()` disabled — its own bar, tested and not met
 
-**Status: done, 2026-10-07 (uncommitted).** **What:** `run_theme_batches` no longer calls `synthesize`,
+**Status: done, 2026-10-07.** **What:** `run_theme_batches` no longer calls `synthesize`,
 `save_synthesis`, or `save_synthesis_error`. A session's thesis files carry only their bites; no `synthesis` or
 `synthesis_error` key is written. The return value of `run_theme_batches` is `consolidate_thesis_file`'s output
 (`<timestamp>_thesis.json`), not `consolidate_synthesis_file`'s. `synthesis.py`, `consolidate_synthesis.py`, and
@@ -682,11 +685,12 @@ away. **Validated:** suite passes, 69 tests (was 70; the test exercising `Unknow
 `unknown_bite_ids` directly, since `synthesis.py` itself is unchanged).
 **Open:** two replacements were discussed and not chosen yet: keeping only a (separately validated) gap-check,
 or a mechanical gap-check built on the survey's discovery/reference-set machinery instead of an LLM judgment.
+*Decided in item 34: nothing replaces it; the survey design is in the Backlog.*
 `README.md` and this file's own item 17 text were annotated, not rewritten, to point here.
 
 ### 33. Per-book vocabulary: a static index, a reference document, and a free pre-flight check
 
-**Status: done, 2026-10-07 (uncommitted); removed 2026-10-08, see item 34.** **What:** new module `src/ParallelProse/vocabulary.py`, decoupled from
+**Status: done, 2026-10-07; removed 2026-10-08, see item 34.** **What:** new module `src/ParallelProse/vocabulary.py`, decoupled from
 `survey.py` on purpose — `survey.py`'s concern is whether a theme is covered, this module's is whether one exact
 word exists. `build_vocabulary(cid)` tokenizes `load_corpus`'s text directly (no embedding, no LLM); `save_vocabulary`
 /`load_vocabulary` persist it to `data/vocabulary/<book>.json`; `lookup(term, vocabulary)` returns exists/count, and
@@ -708,11 +712,12 @@ A and B (203 lines each). `--check` run on a real past batch (v6, `2026-10-05_21
 same fix that took a full evaluation round to surface, now free, instant, and before any query is submitted.
 **Open:** the per-theme half of the vocabulary lag (vocabulary discovered while surveying a theme, exposed as soon
 as that theme's first query is processed, not only at the end of a whole batch) still needs the automatic-discovery
-survey to exist; `translate.py`'s LLM rewrite is still not built.
+survey to exist; `translate.py`'s LLM rewrite is still not built. *Moot: removed in item 34; survey and
+translation are in the Backlog.*
 
 ### 34. Discontinued: the vocabulary pre-flight, the synthesis layer, and the off-target idea
 
-**Status: done, 2026-10-08 (uncommitted).** **What:** removed `vocabulary.py` (the per-book index,
+**Status: done, 2026-10-08.** **What:** removed `vocabulary.py` (the per-book index,
 `<book>_reference.md`, `lookup`), the `--check` pre-flight (`vocabulary_report`, `flagged_words`), `synthesis.py`
 (`synthesize`, `Synthesis`, `unknown_bite_ids`, `load_bites`, `save_synthesis`, `save_synthesis_error`),
 `consolidate_synthesis.py`, the `/consolidate-session` command, and `restrict_to_side`, with their tests and README
@@ -744,6 +749,16 @@ it in code.
 
 **Open:** `docs/claude_web_query_brief.md` still describes `synthesize` as a live step, left as is by decision for
 now. The survey/translation design moves to the Backlog below.
+
+### 35. Housekeeping: superseded data and the PDF split-word repair
+
+**Status: done, 2026-10-08.** **What:** deleted the three index backups (`data/_backup_before_debord_reindex/`,
+`_backup_before_desplit/`, `_backup_before_epub_migration/`, 116 MB), `data/survey/` (172 MB of survey outputs and
+embedding caches, rebuilt from scratch whenever the survey is), and the annotated Debord PDF that B no longer loads
+from. In `ingest.py`, `_join_split_words`, `KNOWN_PDF_SPLITS` and their two tests are gone; the plain PDF branch
+stays (page text, soft hyphens dropped, chapters from the outline), since no catalog book is a PDF today but the
+Portuguese Debord in `data/` is one. Suite: 61 tests passing. **Why:** all of it served the annotated PDF or
+indexes that items 28 and 31 replaced; `survey.py` itself is kept (see Backlog).
 
 ### Backlog (deferred, not dropped)
 
