@@ -622,8 +622,10 @@ have no `quote_selection` and were not re-selected.
 
 ### 30. Evaluation harness
 
-**Status: in progress, started 2026-10-08.** 30.1 is designed (brief written, `load_golden_set` not built); 30.2-30.4
-not started. **What:** four functions, each built in order, each one's output the next one's input:
+**Status: in progress, started 2026-10-08.** 30.1 done 2026-10-09 (the 16-entry golden set passes
+every `load_golden_set` check); 30.2 done 2026-10-09 (`answer_query` shared with
+`run_theme_batches`, `run_golden_entry` returns a bite plus `id` and per-book `chunks`; one live run of g01 checked);
+30.3-30.4 not started. **What:** four functions, each built in order, each one's output the next one's input:
 
 - **30.1 Golden set** — `data/golden_set_augustine_debord.json`, written by Claude web from the brief
   `docs/golden_set_spec.md` (which carries a complete example of the file) and read by `load_golden_set` (new module

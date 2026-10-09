@@ -90,6 +90,23 @@ def retrieval_diagnostics(corpora: dict) -> dict[str, dict]:
             for cid, slot in corpora.items()}
 
 
+async def answer_query(query: str, side: str | None) -> tuple[ComposerAnswer, dict, dict]:
+    """One query through the pipeline: run the graph, pick each book's quote, verify it. Returns the final answer,
+    the bite's extra fields, and the final corpora (which still hold each book's retrieved chunks)."""
+    result = await run_query(query)
+    answer, quote_selection = select_quotes(result["answer"], result["corpora"], query,
+                                            books={side} if side else None)
+    quote_details = verify_quotes(answer, result["corpora"], query)
+    extra = {
+        "quote_selection": quote_selection,
+        "side_is_target": side_is_target(result["answer"], side),
+        "verified": verified_flags(quote_details),
+        "verification": quote_details,
+        "retrieval": retrieval_diagnostics(result["corpora"]),
+    }
+    return answer, extra, result["corpora"]
+
+
 async def run_theme_batches(batch_file: Path) -> Path:
     text = batch_file.read_text()
     themes = parse_batch(text)
@@ -114,17 +131,8 @@ async def run_theme_batches(batch_file: Path) -> Path:
                 if not first_query:
                     await asyncio.sleep(QUERY_PAUSE_SECONDS)
                 first_query = False
-                result = await run_query(query)
-                answer, quote_selection = select_quotes(result["answer"], result["corpora"], query,
-                                                        books={side} if side else None)
-                quote_details = verify_quotes(answer, result["corpora"], query)
-                save_bite(path, theme.title, thesis.text, query, answer, extra={
-                    "quote_selection": quote_selection,
-                    "side_is_target": side_is_target(result["answer"], side),
-                    "verified": verified_flags(quote_details),
-                    "verification": quote_details,
-                    "retrieval": retrieval_diagnostics(result["corpora"]),
-                })
+                answer, extra, _ = await answer_query(query, side)
+                save_bite(path, theme.title, thesis.text, query, answer, extra=extra)
 
     return consolidate_thesis_file(session)
 
