@@ -622,12 +622,30 @@ have no `quote_selection` and were not re-selected.
 
 ### 30. Evaluation harness
 
-**Status: planned.** **What:** a LangSmith-hosted golden set (~10 targeted questions against Augustine/Debord,
-including at least one question only one book addresses, to exercise `reflect`'s `"silent"` case), traced
-automatically via LangSmith once the graph is instrumented, scored by two evaluators: faithfulness via
-`ragas`/`deepeval`'s built-in metric, and a hand-built attribution metric (no off-the-shelf equivalent exists for
-crediting a claim to one of two specific corpora). The comparison axis — chunk size vs. retriever preference via
-docstring bias, or both — is deliberately left open, a per-run choice, not part of the harness's own design. **Why:**
+**Status: in progress, started 2026-10-08.** 30.1 is designed (brief written, `load_golden_set` not built); 30.2-30.4
+not started. **What:** four functions, each built in order, each one's output the next one's input:
+
+- **30.1 Golden set** — `data/golden_set_augustine_debord.json`, written by Claude web from the brief
+  `docs/golden_set_spec.md` (which carries a complete example of the file) and read by `load_golden_set` (new module
+  `evaluation.py`). The standard: exactly 16 entries; per book, an expected label
+  (`ok`/`silent`), with verbatim `anchors` and `min_hits` for an `ok` book (one anchor for a single-passage answer,
+  several for a scattered one) and `absent_terms` plus a `near_miss` flag for a `silent` one. Entries are written
+  passage-first, and the set must cover label combinations, four retrieval cells per book (single/scattered ×
+  specific/abstract), book wording vs. paraphrase, known failures, and at least 8 themes. The loader rejects the file,
+  before any run, when an entry or the set's composition breaks the spec. The first two known-failure entries are the
+  "Anon, anon" and "restless" misses in Augustine.
+- **30.2 Target** — runs one golden query the way `run_theme_batches` does (`run_query`, `select_quotes`,
+  `verify_quotes`, with the entry's `side`) and returns the record the evaluators read.
+- **30.3 Evaluators** — anchor hits against the chunks retrieved per book, and label agreement, both deterministic;
+  plus faithfulness and attribution, as LLM judges calibrated against hand labels before being trusted. Whether a
+  quote exists in the book is already checked deterministically by `verify_quotes`, so faithfulness judges only
+  whether a finding claims more than its quote shows (D3). Attribution is hand-built: no off-the-shelf metric credits
+  a claim to one of two specific corpora.
+- **30.4 Runner** — a LangSmith experiment over the golden set, one configuration per run, repeated, since the same
+  configuration can flip a question between runs. LangSmith is not yet a dependency. The comparison axis — chunk size
+  vs. retriever preference via docstring bias, or both — is a per-run choice, not part of the harness's design.
+
+**Why:**
 comparing before/after the v2 changes would have a foreseeable outcome (the same reason v1-vs-v2 was
 rejected); comparing configurations on the same version is a genuinely open question, so it's the comparison actually
 worth running. **Synergy:** depends on item 9's run function; the faithfulness claim-decompose-then-judge-each-claim
