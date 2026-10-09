@@ -9,6 +9,7 @@ from ParallelProse.catalog import CATALOG, DATA_DIR
 from ParallelProse.ingest import load_corpus
 from ParallelProse.quote_check import _content_terms, match_form
 from ParallelProse.survey import term_pattern
+from ParallelProse.theme_batches import answer_query
 
 GOLDEN_SET_SIZE = 16
 SCATTERED_MIN_DISTANCE = 5000  # characters: farther apart than one default parent chunk (4000)
@@ -151,3 +152,105 @@ def load_golden_set(path: Path) -> list[GoldenEntry]:
     if problems:
         raise ValueError("\n".join(problems))
     return entries
+
+
+def _book_paragraphs(book) -> tuple[list[str], list[int]]:
+    """The book's paragraphs in match_form, and where each one starts in the paragraphs joined with a space.
+    _load_epub joins a chapter's paragraphs with a blank line, so splitting on it gives them back."""
+    paragraphs = [match_form(p) for chapter in load_corpus(str(book.path))
+                  for p in chapter.page_content.split("\n\n") if p.strip()]
+    starts, position = [], 0
+    for paragraph in paragraphs:
+        starts.append(position)
+        position += len(paragraph) + 1
+    return paragraphs, starts
+
+
+def _book_problems(entries: list[GoldenEntry], books: dict[str, tuple[list[str], list[int]]]) -> list[str]:
+    """Anchors: exactly one occurrence in the book (which also proves it exists and sits inside one paragraph),
+    a paragraph used by one entry only, scattered anchors far apart. Absent terms: no occurrence at all."""
+    problems = []
+    used = {}  # (book, paragraph index) -> the entry that uses it
+    for entry in entries:
+        for cid, expectation in entry.expected.items():
+            paragraphs, starts = books[cid]
+            if expectation.label == "silent":
+                for term in expectation.absent_terms:
+                    pattern = _phrase_pattern(term)
+                    count = sum(len(pattern.findall(p)) for p in paragraphs)
+                    if count:
+                        problems.append(f"{entry.id} {cid}: absent term {term!r} occurs {count} times in the book")
+                continue
+
+            found = []  # (paragraph index, position in the whole book), one per anchor found exactly once
+            for anchor in expectation.anchors:
+                pattern = _phrase_pattern(anchor)
+                hits = [(i, starts[i] + m.start()) for i, p in enumerate(paragraphs) for m in pattern.finditer(p)]
+                if len(hits) != 1:
+                    problems.append(f"{entry.id} {cid}: anchor {anchor!r} found {len(hits)} times in the book, "
+                                    f"needs exactly 1")
+                    continue
+                found.append(hits[0])
+
+            paragraph_ids = [i for i, _ in found]
+            if len(set(paragraph_ids)) < len(paragraph_ids):
+                problems.append(f"{entry.id} {cid}: two anchors come from the same paragraph")
+            for i in set(paragraph_ids):
+                owner = used.setdefault((cid, i), entry.id)
+                if owner != entry.id:
+                    problems.append(f"{entry.id} {cid}: anchor paragraph already used by {owner}")
+
+            if len(expectation.anchors) > 1 and len(found) == len(expectation.anchors):
+                spread = max(p for _, p in found) - min(p for _, p in found)
+                if spread < SCATTERED_MIN_DISTANCE:
+                    problems.append(f"{entry.id} {cid}: scattered anchors span {spread} characters, "
+                                    f"need {SCATTERED_MIN_DISTANCE}")
+    return problems
+
+
+def _composition_problems(entries: list[GoldenEntry]) -> list[str]:
+    """Every row of the composition table in docs/golden_set_spec.md, against its minimum."""
+    a, b = sorted(CATALOG)
+    pairs = Counter((entry.expected[a].label, entry.expected[b].label) for entry in entries)
+    rows = [
+        ("both books ok", pairs["ok", "ok"], 6),
+        (f"{a} ok, {b} silent", pairs["ok", "silent"], 3),
+        (f"{a} silent, {b} ok", pairs["silent", "ok"], 3),
+        ("both books silent", pairs["silent", "silent"], 1),
+        ('"wording": "book"', sum(entry.wording == "book" for entry in entries), 5),
+        ('"wording": "paraphrase"', sum(entry.wording == "paraphrase" for entry in entries), 5),
+        ("known_failure", sum(entry.known_failure for entry in entries), 2),
+        ("distinct themes", len({entry.theme for entry in entries}), 8),
+    ]
+    for cid in sorted(CATALOG):
+        expectations = [(entry, entry.expected[cid]) for entry in entries]
+        rows.append((f"{cid} silent with near_miss",
+                     sum(x.label == "silent" and x.near_miss for _, x in expectations), 1))
+        for shape in ("single", "scattered"):
+            for specificity in ("specific", "abstract"):
+                count = sum(x.label == "ok" and (len(x.anchors) > 1) == (shape == "scattered")
+                            and entry.specificity == specificity for entry, x in expectations)
+                rows.append((f"{cid} ok {shape}/{specificity}", count, 2))
+
+    problems = [f"set: {name} has {count}, needs at least {minimum}" for name, count, minimum in rows if
+                count < minimum]
+    if len(entries) != GOLDEN_SET_SIZE:
+        problems.insert(0, f"set: has {len(entries)} entries, needs exactly {GOLDEN_SET_SIZE}")
+    return problems
+
+
+async def run_golden_entry(entry: GoldenEntry) -> dict:
+    """The target: one golden query through the same pipeline the batch runs use. Returns a bite's shape
+    plus the entry's id and each book's retrieved chunks, which the anchor check reads and a bite drops."""
+    answer, extra, corpora = await answer_query(entry.query, entry.side)
+    return {
+        "id": entry.id,
+        "query": entry.query,
+        "answer": answer.model_dump(),
+        **extra,
+        "chunks": {cid: slot["chunks"] or [] for cid, slot in corpora.items()},
+    }
+
+
+if __name__ == "__main__":
+    print(f"{len(load_golden_set(golden_set_path))} entries accepted")
