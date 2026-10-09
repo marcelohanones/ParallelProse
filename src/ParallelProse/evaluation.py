@@ -1,11 +1,12 @@
 import json
 from pathlib import Path
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 from typing import TypedDict, Literal, Annotated
 from ParallelProse.catalog import CATALOG, DATA_DIR
 from ParallelProse.ingest import load_corpus
 from ParallelProse.quote_check import _content_terms, match_form
+from ParallelProse.survey import term_pattern
 
 GOLDEN_SET_SIZE = 16
 SCATTERED_MIN_DISTANCE = 5000  # characters: farther apart than one default parent chunk (4000)
@@ -13,29 +14,31 @@ SCATTERED_MIN_DISTANCE = 5000  # characters: farther apart than one default pare
 golden_set_path = DATA_DIR / "golden_set_augustine_debord.json"
 
 
-
 class OkExpectation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     label: Literal["ok"]
     anchors: list[str] = Field(min_length=1, max_length=5)
     min_hits: int
-    model_validator: @model_validator(mode="after")
+
+    @model_validator(mode="after")
     def anchors_match_min_hits(self) -> "OkExpectation":
         if len(self.anchors) == 1 and self.min_hits == 1:
             return self
-        elif (len(self.anchors) >= 2 or len(self.anchors) <= 5) and (
-                2 <= self.min_hits <= self.min_hits):
+        elif 2 <= self.min_hits <= len(self.anchors):
             return self
         else:
-            raise ValueError(f"{len(self.anchors)} anchors need at least {self.min_hits -1}..., got min_hits={self.min_hits}")
+            raise ValueError(
+                f"{len(self.anchors)} anchors need at least {len(self.anchors) - 1} min_hits, got min_hits={self.min_hits}")
+
 
 OkExpectation(label="ok", anchors=["a b c d"] * 4, min_hits=2)
+
 
 class SilentExpectation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     label: Literal["silent"]
     near_miss: bool
-    absent_terms: list[str]
+    absent_terms: list[str] = Field(min_length=2, max_length=5)
 
 
 Expectation = Annotated[OkExpectation | SilentExpectation, Field(discriminator="label")]
@@ -43,6 +46,33 @@ Expectation = Annotated[OkExpectation | SilentExpectation, Field(discriminator="
 
 class GoldenEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    id: str = Field(pattern=r"^g\d{2}$")
+    theme: str = Field(min_length=1)
+    query: str = Field(min_length=1)
+    side: Literal["A", "B"] | None
+    specificity: Literal["specific", "abstract"]
+    wording: Literal["book", "paraphrase"]
+    known_failure: bool
+    expected: dict[str, Expectation]
+    note: str = Field(min_length=1)
+
+    @field_validator("expected")
+    @classmethod
+    def expected_covers_catalog(cls, value: dict[str, Expectation]) -> dict[str, Expectation]:
+        if set(value) != set(CATALOG):
+            raise ValueError(f"expected has books {sorted(value)}, needs {sorted(CATALOG)}")
+        else:
+            return value
+
+    @field_validator("query")
+    @classmethod
+    def query_names_no_author(cls, value: str) -> str:
+        """The same query is searched in both books, so an author's name in it only adds noise."""
+        surnames = [book.author.split()[-1] for book in CATALOG.values()]
+        named = [surname for surname in surnames if term_pattern(surname).search(value.lower())]
+        if named:
+            raise ValueError(f"query names an author: {', '.join(named)}")
+        return value
 
 
 def load_golden_set(path: Path) -> list[dict]:
@@ -53,7 +83,7 @@ def load_golden_set(path: Path) -> list[dict]:
     problems = []
     for i in entries:
         i["expected"]
+   
+    return entries
 
-
-
-load_golden_set(golden_set_path)
+# load_golden_set(golden_set_path)
