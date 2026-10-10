@@ -1,10 +1,14 @@
 import asyncio
+import inspect
+import json
 
 import pytest
 
 from ParallelProse import theme_batches as tb
 from ParallelProse.agent import ComposerAnswer, CorpusFinding
-from ParallelProse.evaluation import (GoldenEntry, OkExpectation, anchor_hits, label_agreement,
+from ParallelProse import evaluation as ev
+from ParallelProse.evaluation import (EVALUATORS, JUDGES, GoldenEntry, OkExpectation, anchor_hits,
+                                      anchors_evaluator, golden_target, label_agreement, labels_evaluator,
                                       push_golden_set, run_golden_entry)
 
 BITE_EXTRA_KEYS = {"quote_selection", "side_is_target", "verified", "verification", "retrieval"}
@@ -178,3 +182,62 @@ def test_a_dataset_left_with_too_few_examples_is_rejected_not_reused():
 
     with pytest.raises(ValueError, match="holds 1 examples, expected 2"):
         push_golden_set(two_entries(), client=client)
+
+
+class FakeExample:
+    """One LangSmith example: the three parts push_golden_set writes, plus the metadata key LangSmith adds."""
+
+    def __init__(self, pushed):
+        self.inputs, self.outputs = pushed["inputs"], pushed["outputs"]
+        self.metadata = {**pushed["metadata"], "dataset_split": ["base"]}
+
+
+def pushed_example(index=0):
+    client = FakeClient()
+    push_golden_set(two_entries(), client=client)
+    return FakeExample(client.pushed[0][1][index])
+
+
+def record_for(chunks_a, label_a="ok", label_b="silent"):
+    return {"id": "g01", "query": "q",
+            "retrieval": {"A": {"label": label_a}, "B": {"label": label_b}},
+            "chunks": {"A": chunks_a, "B": []}}
+
+
+def test_an_example_rebuilds_the_entry_it_was_split_from():
+    assert ev._entry_from(pushed_example()) == two_entries()[0]
+
+
+def test_the_target_runs_only_the_query_and_side_the_example_carries(monkeypatch):
+    stub_run_query(monkeypatch, [])
+
+    record = asyncio.run(golden_target(pushed_example().inputs))
+
+    assert record["id"] == "g01" and record["query"] == "What keeps people sunk in sleep?"
+    assert set(record) == {"id", "query", "answer"} | BITE_EXTRA_KEYS | {"chunks"}
+
+
+def test_each_book_gets_its_own_key_and_a_silent_book_has_no_anchor_key():
+    example = pushed_example()
+    hit = record_for(["Thus I was held down pleasantly as in sleep."])
+
+    anchors = anchors_evaluator(outputs=hit, example=example)
+    labels = labels_evaluator(outputs=hit, example=example)
+
+    assert [r["key"] for r in anchors["results"]] == ["anchor_hits_A"]      # B is expected silent
+    assert anchors["results"][0]["score"] == 1
+    assert [(r["key"], r["score"]) for r in labels["results"]] == [("label_agreement_A", 1), ("label_agreement_B", 1)]
+
+
+def test_a_missed_anchor_scores_zero_and_keeps_the_detail_in_its_comment():
+    anchors = anchors_evaluator(outputs=record_for(["nothing of the sort"]), example=pushed_example())
+
+    result = anchors["results"][0]
+    assert result["score"] == 0
+    assert json.loads(result["comment"])["missing"] == ["held down pleasantly as in sleep"]
+
+
+def test_every_adapter_has_argument_names_langsmith_accepts():
+    for evaluator in EVALUATORS + JUDGES:
+        assert set(inspect.signature(evaluator).parameters) <= {"run", "example", "inputs", "outputs",
+                                                                "reference_outputs", "attachments"}

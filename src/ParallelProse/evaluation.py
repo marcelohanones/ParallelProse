@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, ConfigDict, TypeAdapter, ValidationError,
 from typing import TypedDict, Literal, Annotated
 from ParallelProse.catalog import CATALOG, DATA_DIR
 from ParallelProse.ingest import load_corpus
+from ParallelProse.judges import attribution, faithfulness
 from ParallelProse.quote_check import _content_terms, match_form
 from ParallelProse.survey import term_pattern
 from ParallelProse.theme_batches import answer_query
@@ -17,6 +18,7 @@ from ParallelProse.theme_batches import answer_query
 GOLDEN_SET_SIZE = 16
 SCATTERED_MIN_DISTANCE = 5000  # characters: farther apart than one default parent chunk (4000)
 QUOTED_RUN = 4  # a query sharing this many consecutive words with an anchor quotes it
+LANGSMITH_METADATA = {"dataset_split"}  # keys LangSmith adds to an example's metadata, not ours to rebuild from
 
 golden_set_path = DATA_DIR / "golden_set_augustine_debord.json"
 
@@ -271,17 +273,23 @@ def _composition_problems(entries: list[GoldenEntry]) -> list[str]:
     return problems
 
 
-async def run_golden_entry(entry: GoldenEntry) -> dict:
-    """The target: one golden query through the same pipeline the batch runs use. Returns a bite's shape
-    plus the entry's id and each book's retrieved chunks, which the anchor check reads and a bite drops."""
-    answer, extra, corpora = await answer_query(entry.query, entry.side)
+async def run_golden_query(entry_id: str, query: str, side: str | None) -> dict:
+    """One golden query through the same pipeline the batch runs use. Returns a bite's shape plus the entry's id and
+    each book's retrieved chunks, which the anchor check reads and a bite drops. Takes the three fields the run needs
+    rather than a whole entry, so LangSmith's target can call it with an example's inputs alone."""
+    answer, extra, corpora = await answer_query(query, side)
     return {
-        "id": entry.id,
-        "query": entry.query,
+        "id": entry_id,
+        "query": query,
         "answer": answer.model_dump(),
         **extra,
         "chunks": {cid: slot["chunks"] or [] for cid, slot in corpora.items()},
     }
+
+
+async def run_golden_entry(entry: GoldenEntry) -> dict:
+    """The target, for callers that already hold the whole entry."""
+    return await run_golden_query(entry.id, entry.query, entry.side)
 
 
 def anchor_hits(record: dict, entry: GoldenEntry) -> dict[str, dict]:
@@ -310,6 +318,54 @@ def label_agreement(record: dict, entry: GoldenEntry) -> dict[str, dict]:
         final = record["retrieval"][cid]["label"]
         results[cid] = {"expected": expectation.label, "final": final, "agree": final == expectation.label}
     return results
+
+
+# MARK: LANGSMITH ADAPTERS
+# Thin wrappers only: LangSmith hands each reader one part of an example and stores {key, score} rows, while the
+# functions above take a whole entry and return per-book dicts. Nothing above depends on LangSmith.
+
+def _entry_from(example) -> GoldenEntry:
+    """A GoldenEntry rebuilt from the three parts push_golden_set split it into."""
+    metadata = {key: value for key, value in (example.metadata or {}).items() if key not in LANGSMITH_METADATA}
+    return GoldenEntry(**example.inputs, **example.outputs, **metadata)
+
+
+async def golden_target(inputs: dict) -> dict:
+    """The target LangSmith calls, once per example (and once per repetition)."""
+    return await run_golden_query(inputs["id"], inputs["query"], inputs["side"])
+
+
+def _rows(name: str, per_book: dict[str, dict], passed: str) -> dict:
+    """Per book, one result keyed f"{name}_{book}": LangSmith averages each key on its own, so the two books stay
+    separate columns. A book with nothing to answer is simply absent, never a zero (which would drag the average)."""
+    return {"results": [
+        {"key": f"{name}_{cid}", "score": int(bool(result[passed])),
+         "comment": json.dumps({k: v for k, v in result.items() if k != passed}, ensure_ascii=False)}
+        for cid, result in sorted(per_book.items())]}
+
+
+def anchors_evaluator(outputs: dict, example) -> dict:
+    """Per book expected ok: did this run retrieve at least min_hits of its anchors?"""
+    return _rows("anchor_hits", anchor_hits(outputs, _entry_from(example)), "passed")
+
+
+def labels_evaluator(outputs: dict, example) -> dict:
+    """Per book: does the final label match the golden one?"""
+    return _rows("label_agreement", label_agreement(outputs, _entry_from(example)), "agree")
+
+
+def faithfulness_evaluator(outputs: dict) -> dict:
+    """Per judged book: is every claim of the finding supported by its quote alone?"""
+    return _rows("faithfulness", faithfulness(outputs), "passed")
+
+
+def attribution_evaluator(outputs: dict) -> dict:
+    """Per judged book: is the finding credited to the book whose passages state it?"""
+    return _rows("attribution", attribution(outputs), "passed")
+
+
+EVALUATORS = [anchors_evaluator, labels_evaluator]            # deterministic, free
+JUDGES = [faithfulness_evaluator, attribution_evaluator]      # one judge-model call per judged book
 
 
 if __name__ == "__main__":
