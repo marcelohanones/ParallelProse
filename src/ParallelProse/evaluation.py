@@ -252,5 +252,33 @@ async def run_golden_entry(entry: GoldenEntry) -> dict:
     }
 
 
+def anchor_hits(record: dict, entry: GoldenEntry) -> dict[str, dict]:
+    """Per book expected ok: how many of its anchors appear in the chunks this run retrieved, matched the way the loader
+    matches them, one chunk at a time (never joined, so no match can cross a seam). Silent books are left to the
+    label check."""
+    results = {}
+    for cid, expectation in entry.expected.items():
+        if expectation.label != "ok":
+            continue
+        chunks = [match_form(chunk) for chunk in record["chunks"][cid]]
+        missing = [anchor for anchor in expectation.anchors
+                   if not any(_phrase_pattern(anchor).search(chunk) for chunk in chunks)]
+        found = len(expectation.anchors) - len(missing)
+        results[cid] = {"found": found, "needed": expectation.min_hits,
+                        "passed": found >= expectation.min_hits, "missing": missing}
+    return results
+
+
+def label_agreement(record: dict, entry: GoldenEntry) -> dict[str, dict]:
+    """Per book, the final label the graph ended on against the golden one. Only an exact match agrees, so a final
+    miss (retries ran out) never does; expected and final stay beside the verdict so the failures can be told apart:
+    ok->miss gave up, ok->silent false silence, silent->ok false ok, silent->miss never conceded."""
+    results = {}
+    for cid, expectation in entry.expected.items():
+        final = record["retrieval"][cid]["label"]
+        results[cid] = {"expected": expectation.label, "final": final, "agree": final == expectation.label}
+    return results
+
+
 if __name__ == "__main__":
     print(f"{len(load_golden_set(golden_set_path))} entries accepted")

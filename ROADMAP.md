@@ -625,7 +625,13 @@ have no `quote_selection` and were not re-selected.
 **Status: in progress, started 2026-10-08.** 30.1 done 2026-10-09 (the 16-entry golden set passes
 every `load_golden_set` check); 30.2 done 2026-10-09 (`answer_query` shared with
 `run_theme_batches`, `run_golden_entry` returns a bite plus `id` and per-book `chunks`; one live run of g01 checked);
-30.3-30.4 not started. **What:** four functions, each built in order, each one's output the next one's input:
+30.3 done 2026-10-09 (`anchor_hits`, `label_agreement`, and the
+two LLM judges in `judges.py`), judges calibrated against 27 hand-labelled findings from the first full run:
+faithfulness agrees 27/27; attribution 26/27 after its prompt was changed to decide by the idea a finding states, not
+by shared words (it answered "both" on vocabulary overlap; g05 A remains, a finding that borrows the other book's
+word "spectacle"). First-run findings, one run only: every one of 6 disagreeing labels is a false `ok` (a book
+expected silent labelled `ok`), 26 of 27 findings claim more than their quote (D3), and 3 of 4 wrong-passage quotes
+came from `select_quotes`' lexical replacement (item 29). 30.4 not started. **What:** four functions, each built in order, each one's output the next one's input:
 
 - **30.1 Golden set** — `data/golden_set_augustine_debord.json`, written by Claude web from the brief
   `docs/golden_set_spec.md` (which carries a complete example of the file) and read by `load_golden_set` (new module
@@ -641,8 +647,12 @@ every `load_golden_set` check); 30.2 done 2026-10-09 (`answer_query` shared with
 - **30.3 Evaluators** — anchor hits against the chunks retrieved per book, and label agreement, both deterministic;
   plus faithfulness and attribution, as LLM judges calibrated against hand labels before being trusted. Whether a
   quote exists in the book is already checked deterministically by `verify_quotes`, so faithfulness judges only
-  whether a finding claims more than its quote shows (D3). Attribution is hand-built: no off-the-shelf metric credits
-  a claim to one of two specific corpora.
+  whether a finding claims more than its quote shows (D3): the finding is split into claims, each judged against the
+  quote alone. Attribution is hand-built: no off-the-shelf metric credits a claim to one of two specific corpora. The
+  judge sees both books' retrieved passages unnamed, in an order fixed per entry and book, and the finding with the
+  authors' names replaced by "the author" (findings name their author, which would let the judge answer from the
+  name). Both judges run on `gpt-4o`, not the system's `gpt-4o-mini`. `judge_records` writes their verdicts beside
+  empty hand-label fields (`data/eval/calibration_*.json`); `judge_agreement` measures agreement once those are filled.
 - **30.4 Runner** — a LangSmith experiment over the golden set, one configuration per run, repeated, since the same
   configuration can flip a question between runs. LangSmith is not yet a dependency. The comparison axis — chunk size
   vs. retriever preference via docstring bias, or both — is a per-run choice, not part of the harness's design.

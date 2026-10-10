@@ -1,8 +1,10 @@
 import asyncio
 
+import pytest
+
 from ParallelProse import theme_batches as tb
 from ParallelProse.agent import ComposerAnswer, CorpusFinding
-from ParallelProse.evaluation import GoldenEntry, run_golden_entry
+from ParallelProse.evaluation import GoldenEntry, OkExpectation, anchor_hits, label_agreement, run_golden_entry
 
 BITE_EXTRA_KEYS = {"quote_selection", "side_is_target", "verified", "verification", "retrieval"}
 
@@ -56,3 +58,53 @@ def test_golden_record_is_a_bite_plus_id_and_each_books_chunks(monkeypatch):
     assert record["id"] == "g01"
     assert record["retrieval"]["B"]["label"] == "silent"
     assert record["chunks"] == {"A": ["some text qa more text"], "B": []}
+
+
+ANCHOR = "held down pleasantly as in sleep"
+SCATTERED = ["the first passage of the answer", "a second passage further on", "a third passage near the end"]
+
+
+def scored(chunks_a, anchors=(ANCHOR,), min_hits=1):
+    expected = {"A": OkExpectation(label="ok", anchors=list(anchors), min_hits=min_hits), "B": entry().expected["B"]}
+    return anchor_hits({"chunks": {"A": chunks_a, "B": []}}, entry().model_copy(update={"expected": expected}))
+
+
+def test_anchor_in_one_chunk_passes_and_silent_books_are_left_out():
+    result = scored(["Thus I was Held down\npleasantly as in sleep by the world."])
+
+    assert result == {"A": {"found": 1, "needed": 1, "passed": True, "missing": []}}
+
+
+def test_anchor_split_across_two_chunks_is_missing():
+    result = scored(["the baggage of this world held down", "pleasantly as in sleep and I could not wake"])
+
+    assert result["A"]["passed"] is False
+    assert result["A"]["missing"] == [ANCHOR]
+
+
+def test_scattered_answer_below_min_hits_fails_and_names_what_was_missed():
+    result = scored(["here is the first passage of the answer, retrieved"], anchors=SCATTERED, min_hits=2)
+
+    assert result["A"] == {"found": 1, "needed": 2, "passed": False, "missing": SCATTERED[1:]}
+
+
+def test_ok_book_with_no_chunks_misses_every_anchor():
+    result = scored([], anchors=SCATTERED, min_hits=2)
+
+    assert result["A"]["found"] == 0 and result["A"]["missing"] == SCATTERED
+
+
+@pytest.mark.parametrize("expected, final, agree", [
+    ("ok", "ok", True), ("ok", "miss", False), ("ok", "silent", False),
+    ("silent", "ok", False), ("silent", "miss", False), ("silent", "silent", True),
+])
+def test_label_agreement_is_an_exact_match_and_miss_never_agrees(expected, final, agree):
+    expectation = (OkExpectation(label="ok", anchors=[ANCHOR], min_hits=1) if expected == "ok"
+                   else entry().expected["B"])
+    golden = entry().model_copy(update={"expected": {"A": expectation, "B": entry().expected["B"]}})
+    record = {"retrieval": {"A": {"label": final}, "B": {"label": "silent"}}}
+
+    result = label_agreement(record, golden)
+
+    assert result["A"] == {"expected": expected, "final": final, "agree": agree}
+    assert result["B"]["agree"] is True
