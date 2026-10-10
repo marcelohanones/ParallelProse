@@ -4,7 +4,8 @@ import pytest
 
 from ParallelProse import theme_batches as tb
 from ParallelProse.agent import ComposerAnswer, CorpusFinding
-from ParallelProse.evaluation import GoldenEntry, OkExpectation, anchor_hits, label_agreement, run_golden_entry
+from ParallelProse.evaluation import (GoldenEntry, OkExpectation, anchor_hits, label_agreement,
+                                      push_golden_set, run_golden_entry)
 
 BITE_EXTRA_KEYS = {"quote_selection", "side_is_target", "verified", "verification", "retrieval"}
 
@@ -108,3 +109,72 @@ def test_label_agreement_is_an_exact_match_and_miss_never_agrees(expected, final
 
     assert result["A"] == {"expected": expected, "final": final, "agree": agree}
     assert result["B"]["agree"] is True
+
+
+class FakeClient:
+    """Records what push_golden_set asked for; no network."""
+
+    def __init__(self, existing=None):
+        self.existing = existing or {}        # dataset name -> number of stored examples
+        self.created, self.pushed = [], []
+
+    def has_dataset(self, dataset_name):
+        return dataset_name in self.existing
+
+    def list_examples(self, dataset_name):
+        return [{"n": i} for i in range(self.existing[dataset_name])]
+
+    def create_dataset(self, name, description=""):
+        self.created.append(name)
+        self.existing[name] = 0
+        return type("Dataset", (), {"id": f"id-{name}"})()
+
+    def create_examples(self, dataset_id, examples):
+        self.pushed.append((dataset_id, examples))
+        return examples
+
+
+def two_entries():
+    second = entry().model_copy(update={"id": "g02", "theme": "other", "query": "Why does praise bind a man?"})
+    return [entry(), second]
+
+
+def test_first_push_creates_the_dataset_and_splits_each_entry_by_its_reader():
+    client = FakeClient()
+
+    name = push_golden_set(two_entries(), client=client)
+
+    assert name.startswith("golden-augustine_debord-") and client.created == [name]
+    dataset_id, examples = client.pushed[0]
+    assert dataset_id == f"id-{name}" and len(examples) == 2
+    assert examples[0]["inputs"] == {"id": "g01", "query": "What keeps people sunk in sleep?", "side": "A"}
+    assert examples[0]["outputs"]["expected"]["A"]["anchors"] == ["held down pleasantly as in sleep"]
+    assert set(examples[0]["metadata"]) == {"theme", "specificity", "wording", "known_failure", "note"}
+
+
+def test_pushing_the_same_entries_again_reuses_the_dataset_without_writing_examples():
+    client = FakeClient()
+    name = push_golden_set(two_entries(), client=client)
+    client.existing[name] = 2
+
+    assert push_golden_set(two_entries(), client=client) == name
+    assert len(client.pushed) == 1
+
+
+def test_editing_an_anchor_gives_the_entries_a_new_dataset_name():
+    client = FakeClient()
+    edited = two_entries()
+    edited[0] = edited[0].model_copy(update={"expected": {
+        "A": OkExpectation(label="ok", anchors=["held down pleasantly as in sleepe"], min_hits=1),
+        "B": edited[0].expected["B"]}})
+
+    assert push_golden_set(edited, client=client) != push_golden_set(two_entries(), client=client)
+
+
+def test_a_dataset_left_with_too_few_examples_is_rejected_not_reused():
+    client = FakeClient()
+    name = push_golden_set(two_entries(), client=client)
+    client.existing[name] = 1                 # create_examples failed partway
+
+    with pytest.raises(ValueError, match="holds 1 examples, expected 2"):
+        push_golden_set(two_entries(), client=client)

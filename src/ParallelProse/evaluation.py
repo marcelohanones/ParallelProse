@@ -1,7 +1,10 @@
 import json
 import re
 from collections import Counter
+from hashlib import sha256
 from pathlib import Path
+
+from langsmith import Client
 
 from pydantic import BaseModel, Field, ConfigDict, TypeAdapter, ValidationError, model_validator, field_validator
 from typing import TypedDict, Literal, Annotated
@@ -161,14 +164,26 @@ def push_golden_set(entries: list[GoldenEntry], client=None) -> str:
     """Creates (or reuses) one LangSmith dataset holding the golden set, and returns its name. The name carries a
     hash of the entries, so unchanged content reuses its dataset and edited content gets a new one, leaving the old
     dataset's experiments comparable. Raises if a dataset of that name holds a different number of examples."""
-    dumped = [e.model_dump() for e in entries]
-    name = (f"golden-{PROJECT}-"
-            # f"{use sha256 of json.dumps(dumped, sort_keys=)True)}"[:8 of the hash]
+    dumped = [entry.model_dump() for entry in entries]
+    digest = sha256(json.dumps(dumped, sort_keys=True).encode()).hexdigest()[:8]
+    name = f"golden-{PROJECT}-{digest}"
+    client = client or Client()
 
-    return "parallel prose"
+    if client.has_dataset(dataset_name=name):
+        stored = sum(1 for _ in client.list_examples(dataset_name=name))
+        if stored != len(entries):  # a create_examples that failed partway would otherwise be reused in silence
+            raise ValueError(f"dataset {name} holds {stored} examples, expected {len(entries)}: "
+                             f"delete it in LangSmith and push again")
+        return name
 
-entries = load_golden_set(golden_set_path)  # gets the 16 goldens
-# name = push_golden_set(entries)  # -> "golden-augustine_debord-3f9a1c2e"
+    dataset = client.create_dataset(name, description=f"ParallelProse golden set ({PROJECT}), "
+                                                      f"written to docs/golden_set_spec.md")
+    client.create_examples(dataset_id=dataset.id, examples=[
+        {"inputs": {"id": entry["id"], "query": entry["query"], "side": entry["side"]},
+         "outputs": {"expected": entry["expected"]},
+         "metadata": {key: entry[key] for key in ("theme", "specificity", "wording", "known_failure", "note")}}
+        for entry in dumped])
+    return name
 
 
 def _book_paragraphs(book) -> tuple[list[str], list[int]]:
@@ -298,4 +313,6 @@ def label_agreement(record: dict, entry: GoldenEntry) -> dict[str, dict]:
 
 
 if __name__ == "__main__":
-    print(f"{len(load_golden_set(golden_set_path))} entries accepted")
+    golden_entries = load_golden_set(golden_set_path)
+    print(f"{len(golden_entries)} entries accepted")
+    print(f"dataset: {push_golden_set(golden_entries)}")
