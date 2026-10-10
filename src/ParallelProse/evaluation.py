@@ -154,6 +154,23 @@ def load_golden_set(path: Path) -> list[GoldenEntry]:
     return entries
 
 
+PROJECT = "augustine_debord"
+
+
+def push_golden_set(entries: list[GoldenEntry], client=None) -> str:
+    """Creates (or reuses) one LangSmith dataset holding the golden set, and returns its name. The name carries a
+    hash of the entries, so unchanged content reuses its dataset and edited content gets a new one, leaving the old
+    dataset's experiments comparable. Raises if a dataset of that name holds a different number of examples."""
+    dumped = [e.model_dump() for e in entries]
+    name = (f"golden-{PROJECT}-"
+            # f"{use sha256 of json.dumps(dumped, sort_keys=)True)}"[:8 of the hash]
+
+    return "parallel prose"
+
+entries = load_golden_set(golden_set_path)  # gets the 16 goldens
+# name = push_golden_set(entries)  # -> "golden-augustine_debord-3f9a1c2e"
+
+
 def _book_paragraphs(book) -> tuple[list[str], list[int]]:
     """The book's paragraphs in match_form, and where each one starts in the paragraphs joined with a space.
     _load_epub joins a chapter's paragraphs with a blank line, so splitting on it gives them back."""
