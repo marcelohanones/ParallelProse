@@ -3,8 +3,11 @@ import math
 import re
 import unicodedata
 from collections import Counter
+from functools import lru_cache
 
 from ParallelProse.agent import ComposerAnswer
+from ParallelProse.catalog import CATALOG
+from ParallelProse.ingest import load_corpus
 
 SOFT_HYPHEN = re.compile(r"­\s*")  # the PDF's hidden hyphen, often followed by a line break
 PUNCTUATION_MAP = str.maketrans({"“": '"', "”": '"', "‘": "'", "’": "'", "—": "-", "–": "-"})
@@ -59,12 +62,28 @@ def _differences(quote: str, window: str, limit: int = 4) -> list[list[str]]:
     return [[tag, quote[i1:i2], window[j1:j2]] for tag, i1, i2, j1, j2 in opcodes if tag != "equal"][:limit]
 
 
+@lru_cache
+def book_paragraphs(book) -> tuple[list[str], list[int]]:
+    """The book's paragraphs in match_form, and where each one starts in the paragraphs joined with a space.
+    _load_epub joins a chapter's paragraphs with a blank line, so splitting on it gives them back. Cached per
+    book: a session runs many queries against the same two books, and this parses the epub from scratch."""
+    paragraphs = [match_form(p) for chapter in load_corpus(str(book.path))
+                  for p in chapter.page_content.split("\n\n") if p.strip()]
+    starts, position = [], 0
+    for paragraph in paragraphs:
+        starts.append(position)
+        position += len(paragraph) + 1
+    return paragraphs, starts
+
+
 def verify_quotes(answer: ComposerAnswer, corpora: dict, query: str) -> dict[str, dict]:
-    """Per book, how its quote relates to that book's retrieved chunks. `status` is one of:
-    no_quote; echo_of_query (the quote is the query itself); verbatim (the quote is a whole sentence the chunks contain);
-    prefix (the quote opens a longer sentence; quote_full is that sentence as written); fragment (the quote sits inside
-    a longer sentence; quote_full is that sentence); differs_only_by_corpus_numbers (found once the corpus's bare thesis
-    numbers are ignored); not_found. Failed quotes also carry similarity, nearest and differences."""
+    """Per book, how its quote relates to that book's retrieved chunks and, failing that, to the book itself.
+    `status` is one of: no_quote; echo_of_query (the quote is the query itself); verbatim (the quote is a whole
+    sentence the chunks contain); prefix (the quote opens a longer sentence; quote_full is that sentence as
+    written); fragment (the quote sits inside a longer sentence; quote_full is that sentence);
+    differs_only_by_corpus_numbers (found once the corpus's bare thesis numbers are ignored); found_in_book (not
+    in the retrieved chunks, but the book itself has it — a retrieval gap, not an invented quote); not_found (the
+    book does not contain it either). Failed quotes also carry similarity, nearest and differences."""
     query_form = match_form(query, is_quote=True)
     details = {}
     for finding in answer.unique_findings:
@@ -92,7 +111,8 @@ def verify_quotes(answer: ComposerAnswer, corpora: dict, query: str) -> dict[str
         elif _without_bare_numbers(quote_form) in _without_bare_numbers(joined):
             entry["status"] = "differs_only_by_corpus_numbers"
         else:
-            entry["status"] = "not_found"
+            paragraphs, _ = book_paragraphs(CATALOG[cid])
+            entry["status"] = "found_in_book" if quote_form in " ".join(paragraphs) else "not_found"
         if entry["status"] in ("differs_only_by_corpus_numbers", "not_found"):
             similarity, raw, form = _nearest(quote_form, windows)
             entry.update(similarity=round(similarity, 3), nearest=raw, differences=_differences(quote_form, form))

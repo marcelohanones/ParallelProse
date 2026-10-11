@@ -1,3 +1,4 @@
+from ParallelProse import quote_check as qc
 from ParallelProse.agent import ComposerAnswer, CorpusFinding
 from ParallelProse.quote_check import normalize_text, verified_flags, verify_quotes
 
@@ -64,6 +65,50 @@ def test_changed_punctuation_inside_the_quote_is_still_not_found():
     assert detail["nearest"] == "passions? for the auditor is not called on to relieve"
     assert ["replace", ",", "?"] in detail["differences"]
     assert 0 < detail["similarity"] < 1
+
+
+def test_book_paragraphs_splits_on_the_blank_line_load_corpus_uses_between_paragraphs(monkeypatch):
+    class Chapter:
+        def __init__(self, page_content):
+            self.page_content = page_content
+
+    class Book:
+        path = "irrelevant.epub"
+
+    monkeypatch.setattr(qc, "load_corpus", lambda path: [Chapter("First paragraph.\n\nSecond paragraph.")])
+    qc.book_paragraphs.cache_clear()
+
+    paragraphs, starts = qc.book_paragraphs(Book())
+
+    assert paragraphs == ["first paragraph.", "second paragraph."]
+    assert starts == [0, len("first paragraph.") + 1]
+
+
+def test_a_colon_mid_sentence_in_the_corpus_is_still_matched_verbatim():
+    # the real failure mode item 37 targets: _windows() splits a "sentence" wherever [.!?;:] appears, even
+    # when the colon doesn't actually end the sentence grammatically (epub text runs straight into "and ...").
+    detail = check("held down pleasantly, as in sleep.",
+                    "held down pleasantly, as in sleep: and the thoughts wherein I meditated were like dreams.")
+
+    assert detail["status"] == "verbatim"
+
+
+def test_quote_missing_from_chunks_but_present_in_the_book_is_found_in_book(monkeypatch):
+    monkeypatch.setattr(qc, "book_paragraphs", lambda book: (["give me chastity and continency, only not yet"], [0]))
+
+    detail = check("Give me chastity and continency, only not yet.", "some unrelated retrieved passage")
+
+    assert detail["status"] == "found_in_book"
+    assert "similarity" not in detail
+
+
+def test_quote_missing_from_chunks_and_from_the_book_is_not_found(monkeypatch):
+    monkeypatch.setattr(qc, "book_paragraphs", lambda book: (["nothing like the quote at all"], [0]))
+
+    detail = check("a quote that exists nowhere", "some unrelated retrieved passage")
+
+    assert detail["status"] == "not_found"
+    assert "similarity" in detail
 
 
 def test_no_quote_has_no_flag():

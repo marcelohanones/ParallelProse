@@ -9,9 +9,8 @@ from langsmith import Client, aevaluate
 from pydantic import BaseModel, Field, ConfigDict, TypeAdapter, ValidationError, model_validator, field_validator
 from typing import TypedDict, Literal, Annotated
 from ParallelProse.catalog import CATALOG, DATA_DIR
-from ParallelProse.ingest import load_corpus
 from ParallelProse.judges import attribution, faithfulness
-from ParallelProse.quote_check import _content_terms, match_form
+from ParallelProse.quote_check import _content_terms, book_paragraphs, match_form
 from ParallelProse.survey import term_pattern
 from ParallelProse.theme_batches import answer_query
 
@@ -150,7 +149,7 @@ def load_golden_set(path: Path) -> list[GoldenEntry]:
         raise ValueError("\n".join(problems))  # the book checks below assume well-formed entries
 
     # 2 — BOOK TEXT. Reads: both books. Checks nothing; only builds.
-    books = {cid: _book_paragraphs(book) for cid, book in CATALOG.items()}
+    books = {cid: book_paragraphs(book) for cid, book in CATALOG.items()}
 
     # 3 — EACH ENTRY AGAINST ITS BOOK: could any run pass it?  4 — THE WHOLE SET: does it fill every row?
     problems = _book_problems(entries, books) + _composition_problems(entries)
@@ -186,18 +185,6 @@ def push_golden_set(entries: list[GoldenEntry], client=None) -> str:
          "metadata": {key: entry[key] for key in ("theme", "specificity", "wording", "known_failure", "note")}}
         for entry in dumped])
     return name
-
-
-def _book_paragraphs(book) -> tuple[list[str], list[int]]:
-    """The book's paragraphs in match_form, and where each one starts in the paragraphs joined with a space.
-    _load_epub joins a chapter's paragraphs with a blank line, so splitting on it gives them back."""
-    paragraphs = [match_form(p) for chapter in load_corpus(str(book.path))
-                  for p in chapter.page_content.split("\n\n") if p.strip()]
-    starts, position = [], 0
-    for paragraph in paragraphs:
-        starts.append(position)
-        position += len(paragraph) + 1
-    return paragraphs, starts
 
 
 def _book_problems(entries: list[GoldenEntry], books: dict[str, tuple[list[str], list[int]]]) -> list[str]:

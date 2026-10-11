@@ -831,7 +831,7 @@ survives a reindex if the id is content-addressed.
 
 ### 37. Quote verification runs against the book, not only against the retrieved chunks
 
-**Status: not started.** **What:** `verify_quotes` (`quote_check.py:62`) gains a second pass. A quote no retrieved chunk
+**Status: done (2026-10-11).** **What:** `verify_quotes` (`quote_check.py:62`) gains a second pass. A quote no retrieved chunk
 contains is looked up in the book's own text — `load_corpus`, the same source `_book_paragraphs` reads
 (`evaluation.py:191`) — under two new statuses: one for text the book contains outside the retrieved chunks, one for
 text the book does not contain. Two matching repairs ride along: a quote-mark character `QUOTE_MARKS`
@@ -850,6 +850,16 @@ is the opposite of dialogue.`, so that quote's `verified: false` was correct and
 reconstruction. **Synergy:** this is what makes item 40's `Ancoragem` rule enforceable without a human re-check
 ledger: existence gets demonstrated the way `_book_problems` (`evaluation.py:203`) already demonstrates it for
 golden-set anchors.
+
+**Built as:** the book-level pass landed as a new `found_in_book` status (quote absent from the retrieved chunks,
+present in the book — a retrieval gap, not an invention), reached only when the chunk-level checks already fail.
+`book_paragraphs` moved from `evaluation.py` down into `quote_check.py` (cached, so a session reparses each epub
+once, not once per query) and `evaluation.py` now imports it. Of the two matching repairs: the trailing-punctuation
+one (the "as in sleep." / "as in sleep:" case) was reproduced against the real saved session and found **already
+fixed** by the current `TRAILING_PUNCTUATION` regex — locked in with a regression test, no code change needed. The
+quote-mark-folding repair was **not built**: every non-ASCII punctuation character in both full books and in every
+model-generated quote across every saved session was enumerated, and none falls outside what `PUNCTUATION_MAP`
+already folds — there is no observed failure to fix. Revisit only if one surfaces.
 
 ### 38. Edition metadata per corpus
 
