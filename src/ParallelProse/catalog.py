@@ -12,6 +12,9 @@ class Book:
     era: str
     collection_name: str
     file_name: str
+    translator: str
+    year: str
+    publisher: str
 
     @property
     def path(self) -> Path:
@@ -27,12 +30,18 @@ CATALOG: dict[str, Book] = {
         author="Saint Augustine",
         era="397",
         collection_name="augustine_confessions",
-        file_name="The_Confessions_Of_Saint_Augustine-Saint_Augustine.epub"),
+        file_name="The_Confessions_Of_Saint_Augustine-Saint_Augustine.epub",
+        translator="Edward Bouverie Pusey",
+        year="1838",
+        publisher="Duke Classics"),
     "B":
         Book(
             book_title="The Society of the Spectacle",
             author="Guy Debord",
             era="1967",
             collection_name="debord_spectacle",
-            file_name="The_Society_of_the_Spectacle_(Knabb_2002)-Guy_Debord.epub")
+            file_name="The_Society_of_the_Spectacle_(Knabb_2002)-Guy_Debord.epub",
+            translator="Ken Knabb",
+            year="2002",
+            publisher="Hobgoblin Press")
 }

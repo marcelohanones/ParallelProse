@@ -11,7 +11,7 @@ from ParallelProse.evaluation import (EVALUATORS, JUDGES, GoldenEntry, OkExpecta
                                       anchors_evaluator, golden_target, label_agreement, labels_evaluator,
                                       push_golden_set, run_experiment, run_golden_entry)
 
-BITE_EXTRA_KEYS = {"quote_selection", "side_is_target", "verified", "verification", "retrieval"}
+BITE_EXTRA_KEYS = {"bite_id", "quote_selection", "side_is_target", "verified", "verification", "retrieval"}
 
 
 def fake_result():

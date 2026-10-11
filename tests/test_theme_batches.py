@@ -98,6 +98,22 @@ def test_run_theme_batches_stores_both_sides_with_side_is_target(tmp_path, monke
     assert shared_bite["side_is_target"] == {"A": None, "B": None}
 
 
+def test_bite_id_is_stable_for_the_same_content():
+    assert tb.compute_bite_id("A", "a quote", "a query") == tb.compute_bite_id("A", "a quote", "a query")
+
+
+def test_bite_id_differs_by_corpus_quote_or_query():
+    base = tb.compute_bite_id("A", "a quote", "a query")
+    assert tb.compute_bite_id("B", "a quote", "a query") != base
+    assert tb.compute_bite_id("A", "another quote", "a query") != base
+    assert tb.compute_bite_id("A", None, "a query") != tb.compute_bite_id("A", None, "another query")
+
+
+def test_bite_id_falls_back_to_the_query_when_there_is_no_quote():
+    bite_id = tb.compute_bite_id("A", None, "a silent query")
+    assert bite_id and bite_id == tb.compute_bite_id("A", None, "a silent query")
+
+
 def test_slugify_is_ascii_hyphenated_and_capped():
     assert tb.slugify("Time, memory & the self") == "time-memory-the-self"
     assert tb.slugify("Símbolo e Ação") == "simbolo-e-acao"
@@ -127,6 +143,9 @@ def test_run_theme_batches_builds_the_session_tree(tmp_path, monkeypatch):
     assert (session / "source.md").read_text() == BATCH
     manifest = json.loads((session / "manifest.json").read_text())
     assert manifest["source"] == "themes.md" and manifest["project"] == "augustine_debord"
+    assert manifest["books"]["A"] == {"title": "The Confessions of Saint Augustine",
+                                      "translator": "Edward Bouverie Pusey", "year": "1838",
+                                      "publisher": "Duke Classics"}
 
     theme_dirs = sorted(p.name for p in session.iterdir() if p.is_dir())
     assert theme_dirs == ["theme-01_crowds-and-the-gaze", "theme-02_time-memory-the-self"]
@@ -135,6 +154,8 @@ def test_run_theme_batches_builds_the_session_tree(tmp_path, monkeypatch):
     assert "synthesis" not in first_thesis
     assert first_thesis["bites"][0]["verified"] == {"A": True, "B": True}
     assert first_thesis["bites"][0]["retrieval"]["A"] == {"label": "ok", "reason": "fine", "lineage": []}
+    assert set(first_thesis["bites"][0]["bite_id"]) == {"A", "B"}
+    assert first_thesis["bites"][0]["bite_id"]["A"] != first_thesis["bites"][0]["bite_id"]["B"]
 
     consolidated = json.loads(out.read_text())
     assert consolidated["session"] == session.name

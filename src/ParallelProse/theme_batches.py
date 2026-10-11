@@ -5,12 +5,13 @@ import sys
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
+from hashlib import sha256
 from pathlib import Path
 
 from ParallelProse.agent import ComposerAnswer, run_query
 from ParallelProse.catalog import CATALOG, DATA_DIR
 from ParallelProse.consolidate_thesis import consolidate_thesis_file
-from ParallelProse.quote_check import select_quotes, verified_flags, verify_quotes
+from ParallelProse.quote_check import match_form, select_quotes, verified_flags, verify_quotes
 
 PROJECT = "augustine_debord"
 BATCHES_PATH = DATA_DIR / "theme_batches"
@@ -79,6 +80,13 @@ def save_bite(path: Path, theme: str, thesis: str, query: str, answer: ComposerA
     path.write_text(json.dumps(session, indent=2))
 
 
+def compute_bite_id(corpus_id: str, quote: str | None, query: str) -> str:
+    """A bite's content-addressed id: the pair, the corpus and the quoted span, or the query when there's no
+    quote (a silent book still needs an id addressable by reference, not by its position in the file)."""
+    span = match_form(quote, is_quote=True) if quote is not None else match_form(query, is_quote=True)
+    return sha256(json.dumps([PROJECT, corpus_id, span]).encode()).hexdigest()[:8]
+
+
 def side_is_target(answer: ComposerAnswer, side: str | None) -> dict[str, bool | None]:
     """Per book, whether that book is the one a twin query was tagged with. None for an untagged query, where neither side is the target."""
     return {f.corpus_id: None if side is None else f.corpus_id == side for f in answer.unique_findings}
@@ -98,6 +106,7 @@ async def answer_query(query: str, side: str | None) -> tuple[ComposerAnswer, di
                                             books={side} if side else None)
     quote_details = verify_quotes(answer, result["corpora"], query)
     extra = {
+        "bite_id": {f.corpus_id: compute_bite_id(f.corpus_id, f.quote, query) for f in answer.unique_findings},
         "quote_selection": quote_selection,
         "side_is_target": side_is_target(result["answer"], side),
         "verified": verified_flags(quote_details),
@@ -118,7 +127,9 @@ async def run_theme_batches(batch_file: Path) -> Path:
         "source": batch_file.name,
         "started": started.isoformat(timespec="seconds"),
         "project": PROJECT,
-        "books": {cid: book.book_title for cid, book in CATALOG.items()},
+        "books": {cid: {"title": book.book_title, "translator": book.translator,
+                        "year": book.year, "publisher": book.publisher}
+                  for cid, book in CATALOG.items()},
     }, indent=2, ensure_ascii=False))
 
     first_query = True

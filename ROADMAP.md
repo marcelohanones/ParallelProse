@@ -17,12 +17,16 @@
   validated against item 10's own test) are all done (2026-10-02 through 2026-10-03) — see "v3 — after v2 is
   complete" below.
 - **v4 (in progress, started 2026-10-03)** — a synthesis layer connecting several targeted queries to a stated
-  thesis (item 12, committed), then a proper test suite (item 16), then a theme parser (item 17), then the evaluation harness (item 30). Items
-  13-15 are the retrieval and silent-verdict fixes built after item 12 was committed. The synthesis layer was always
-  its own version — a distinct capability layered on top of a finished, tested two-book comparison
-  system; the test suite and eval harness moved here from v3 since v3's own completion no longer waits on them, and
-  now land after the synthesis layer so they cover it too. See "v4 — after v3 is
-  complete" below.
+  thesis (item 12, committed), then a proper test suite (item 16), then a theme parser (item 17), then the evaluation
+  harness (item 30). Items 13-15 are the retrieval and silent-verdict fixes built after item 12 was committed; items
+  18-29 are the session, brief, twin-query and quote-verification work the theme batches turned out to need; item 31
+  moved the Debord corpus to a plain EPUB, and items 32, 34 and 35 discontinued the synthesis layer, the vocabulary
+  pre-flight (item 33) and the data they left behind. The synthesis layer was always its own version — a distinct
+  capability layered on top of a finished, tested two-book comparison system; the test suite and eval harness moved
+  here from v3 since v3's own completion no longer waits on them, and now land after the synthesis layer so they cover
+  it too. Items 36-43, next up, are the handoff between this system and the side that writes the queries and the
+  ideas: bite identity, verification against the book, the witness-view export, a rejectable standard for idea units,
+  the `ok` and `silent` labels, and a falsification round. See "v4 — after v3 is complete" below.
 - **RAG-Tetris** — a separate future project (comparing code across versions), out of scope here.
 
 Suggested build order below follows dependency, not memory-entry order: state shape and the merge come first because
@@ -814,6 +818,141 @@ from. In `ingest.py`, `_join_split_words`, `KNOWN_PDF_SPLITS` and their two test
 stays (page text, soft hyphens dropped, chapters from the outline), since no catalog book is a PDF today but the
 Portuguese Debord in `data/` is one. Suite: 61 tests passing. **Why:** all of it served the annotated PDF or
 indexes that items 28 and 31 replaced; `survey.py` itself is kept (see Backlog).
+
+### 36. Bite identity: a content-addressed `bite_id`
+
+**Status: done (2026-10-11).** **What:** every bite gains a `bite_id` derived from its own content — the pair, the corpus id
+and the quoted span — written by `save_bite` (`theme_batches.py:72`) and carried through `consolidate_thesis_file`.
+Never derived from the session folder or from the bite's position inside the file. **Why:** bites have no id at all
+today: a bite is addressed by session timestamp plus position in `<timestamp>_thesis.json`, so a reindex that moves a
+passage into another chunk, or a session file rebuilt after an edit, silently repoints every reference to it.
+**Synergy:** prerequisite for item 39's export, which is addressed by id, and for item 40's `Ancoragem`, which only
+survives a reindex if the id is content-addressed.
+
+### 37. Quote verification runs against the book, not only against the retrieved chunks
+
+**Status: not started.** **What:** `verify_quotes` (`quote_check.py:62`) gains a second pass. A quote no retrieved chunk
+contains is looked up in the book's own text — `load_corpus`, the same source `_book_paragraphs` reads
+(`evaluation.py:191`) — under two new statuses: one for text the book contains outside the retrieved chunks, one for
+text the book does not contain. Two matching repairs ride along: a quote-mark character `QUOTE_MARKS`
+(`quote_check.py:11`) does not fold, and sentence-internal punctuation, which `TRAILING_PUNCTUATION`
+(`quote_check.py:12`) ignores only at the quote's end. `VERIFIED_STATUSES` (`quote_check.py:14`) and `verified_flags`
+(`quote_check.py:157`) decide which new status counts as verified.
+
+**Why:** measured over every session on disk — 26 bites carry `verified: false`. 11 come from sessions older than item
+27 and have no recorded cause; of the 12 that do, roughly 4 are a quote whose tail falls outside the retrieved chunks,
+2 are the matching gaps above, 3 are non-contiguous joins (D2, correctly rejected) and 2 are a word the model inserted
+(correctly rejected). Checked against the corpora: `give me chastity and continency, only not yet` and `held down
+pleasantly, as in sleep` each occur once, contiguous, in A, and `what appears is good` once in B — text the books
+contain that the current check calls `not_found`, because it only ever searched the retrieved chunks. The same check
+settles the other direction: `the spectacle is the opposite of dialogue` has 0 occurrences in B, whose text reads `It
+is the opposite of dialogue.`, so that quote's `verified: false` was correct and the citation bank's wording is a
+reconstruction. **Synergy:** this is what makes item 40's `Ancoragem` rule enforceable without a human re-check
+ledger: existence gets demonstrated the way `_book_problems` (`evaluation.py:203`) already demonstrates it for
+golden-set anchors.
+
+### 38. Edition metadata per corpus
+
+**Status: done (2026-10-11).** **What:** `Book` (`catalog.py`) gains translator, year and publisher — A is Pusey, B is Knabb
+2002, the wording item 31 established for the text that had been catalogued as "2014 Annotated" — carried into the
+session's `manifest.json` and into item 39's export. **Why:** already on the open-items list for the credit line, and
+now a dependency rather than a nicety: the edition decides what may cross over to a script, so it has to travel with
+the quote instead of living only in the catalog. **Synergy:** needed by item 39; independent of the rest.
+
+### 39. The witness view: one export per session, quotes with provenance
+
+**Status: not started.** **What:** a function that reads a session's `<timestamp>_thesis.json` and writes
+`witness_view_<project>_<session>.json`, one record per book per query: `bite_id`, session, query code and query text,
+`corpus_id`, edition, `retrieval` (label, `side_is_target`, `forced_retriever`, lineage), the quote, the whole
+`verification` object, `quote_selection`, and the finding in a block of its own, after the quote. It never carries
+`agreement`, `disagreement`, `needs_revision` or anything derived from them, never a quote for a book labelled
+`silent`, and never `verification.nearest` under the `quote` key. A `context_window` of one or two sentences either
+side of the quote, cut from the book's text, belongs to this record.
+
+**Why:** the comparison fields are a hypothesis the reader cannot un-see, and this file's reader is the side whose job
+is to produce the comparison — handing over the system's own reading of convergence anchors that work to it. They are
+also the only fields in the output no evaluator scores, and `route_after_reflection` (`agent.py:364`) never reads
+`needs_revision`, so nothing in the graph depends on them leaving. `verification` travels whole because the boolean
+alone cannot separate a punctuation miss from an echo of the query: 3 bites on disk carry `status: "echo_of_query"`,
+and 8 of the 16 records in `data/eval/records_2026-10-09_2050.json` had their quote replaced by `select_quotes`, which
+the boolean hides too. The window is cut from the book rather than from the parent chunk because a parent carries 100
+characters of overlap (`retrieve.py:47`), so a sentence split at the seam is not recoverable from it.
+
+**Scope:** this file feeds query and theme work only. It is not a copyright firewall — it exists to carry the quote —
+and it never goes to a session writing a script, which reads item 40's output instead.
+
+**Synergy:** needs items 36 and 38. Its field list is specified by the side that consumes it, the same arrangement
+that made the golden set land on the first try (item 30.1).
+
+### 40. Idea units: a spec and a validator
+
+**Status: not started.** **What:** `docs/idea_unit_spec.md` plus `load_idea_units` in a new module, built the way item
+30.1 was — the spec carries one complete example, and the loader rejects the file before anything reads it. The rules:
+
+- `tipo` is one of convergence, divergence, single voice, false positive. Four, not three: a pair whose shared
+  mechanism is real and whose outcome differs is neither a convergence nor a false positive.
+- `Ancoragem` is a list of `bite_id`, never quoted text, and every id's bite must pass item 37's book check.
+  Validated with `_phrase_pattern` (`evaluation.py:26`), the matcher `_book_problems` already uses, so the rule needs
+  no human countersignature.
+- A signature-word list per side, tested as cross-contamination — a term belonging to one book appearing in a unit
+  anchored entirely in the other — raised as a flag, not a rejection, since a genuinely cross-book unit must name
+  both vocabularies.
+- A falsification test phrased as a batch query with its target side declared, and a separate field for a single-voice
+  unit, which has no target side.
+- Promotion reads a registered null search (term, side, corpus, date) and a named decider. It never promotes because
+  retrieval came back empty.
+
+**Why:** the measured asymmetry is that the system's output has a rejectable standard and the idea layer has none, and
+the golden set is this project's own evidence that writing the standard first is what makes the material land on the
+first try. Calibration cases, all already in hand: a quote the current check rejects and the book contains (item 37);
+`g05`, whose A-side finding borrows B's word "spectacle" and is the attribution judge's only disagreement in 27;
+`g08`, a known failure whose run returns the wrong passage for a query worded from the book; `g09`, where B is
+`silent` with `near_miss: true` on a pair the citation bank rates highly, which the taxonomy has to adjudicate as a
+divergence of axis or a false positive. **Synergy:** depends on items 36 and 37; its output is the only file a
+script-writing session reads, which is what puts the quotes out of reach rather than merely off-limits.
+
+### 41. `ok` defined, the false `ok` fixed, and `silent` split
+
+**Status: not started.** **What:** three steps, in order. Write down what `ok` asserts — that this book answers the
+query, not that the query's subject appears in it — in `CorpusCritique.label`'s description (`agent.py:53`). Then fix
+the disagreement that measures: in the first full golden-set run, 6 of 32 labels disagree with the golden set, and
+every one of the 6 is a book expected `silent` and labelled `ok` (g07 B, g09 B, g10 B, g11 B, g13 A, g15 A). Then
+split what `silent` covers today — absence in the book, a retrieval miss, the non-target side of a twin — and only
+then promote genuine absence to an editorial category.
+
+**Why:** `label_agreement` already scores this field, so the fix is measurable the day it lands. Promoting `silent`
+before the split imports the error: of the 12 silent verdicts in the history, 9 were the non-target side of a tagged
+twin. **Synergy:** feeds item 40, whose single-voice type is populated from genuine absence; independent of items
+36-39.
+
+### 42. `claim_in_passage` and `form` in the composer's output
+
+**Status: not started.** **What:** `CorpusFinding.finding` (`agent.py:78`) becomes a claim restricted to what the
+passage asserts — when X, Y happens, because Z — with an explicit escape for a passage that states no Z, so the model
+marks it unstated instead of supplying one. A sibling `form` field classifies the passage itself: scene, thesis,
+confession, diagnosis, a closed list.
+
+**Why:** 26 of the 27 hand-labelled findings from the first golden-set run claim more than their quote shows (D3), and
+the faithfulness judge agrees with those hand labels 27 of 27, so this change has a calibrated instrument the day it
+ships. One caveat that calibration carries: only 1 of the 27 labels is a pass, so the judge's accuracy on a *faithful*
+finding rests on a single case — and that is the side this change exists to populate, so the calibration set needs
+findings that should pass before the judge measures the result. `form` is the one abstraction inside the retrieved
+passage itself, and it ships without a metric. **Synergy:** this is the finding item 39 exports in its own block and
+the claim item 40's units are written against.
+
+### 43. A falsification round
+
+**Status: not started.** **What:** each idea unit's falsification test runs as a query in an ordinary batch file, with
+its target side tagged, and its outcome is recorded as a null search (term, side, corpus, date) instead of read as a
+verdict. No pipeline change: a falsification test is a query with a declared side, which items 17 and 20 already
+support.
+
+**Why:** a convergence is worth a script only once someone has looked for what would break it, and the gate has to
+read the search rather than the silence, because a retrieval miss and an absence in the book look identical from
+outside. Three golden-set entries (g07, g08, g09) are known failures precisely because their runs return the wrong
+passage, so a falsification test landing on one of those formulations would otherwise read as "nothing against it".
+**Synergy:** runs last. It depends on item 37 (a quote nobody can locate is not evidence), on item 41 (a false `ok`
+reads as the counter-example having been found), and on item 40, where the units and their tests are written.
 
 ### Backlog (deferred, not dropped)
 
