@@ -79,6 +79,7 @@ def test_parse_batch_rejects_malformed_lines(bad, message):
 def test_run_theme_batches_stores_both_sides_with_side_is_target(tmp_path, monkeypatch):
     monkeypatch.setattr(tb, "BATCHES_PATH", tmp_path)
     monkeypatch.setattr(tb, "QUERY_PAUSE_SECONDS", 0)
+    monkeypatch.setattr(tb, "build_witness_view", lambda path: None)
 
     async def fake_run_query(query):
         return {"answer": answer(f"agree on {query[:10]}"), "corpora": corpora_for()}
@@ -96,6 +97,7 @@ def test_run_theme_batches_stores_both_sides_with_side_is_target(tmp_path, monke
     assert {f["corpus_id"] for f in tagged_bite["answer"]["unique_findings"]} == {"A", "B"}
     assert tagged_bite["side_is_target"] == {"A": True, "B": False}
     assert shared_bite["side_is_target"] == {"A": None, "B": None}
+    assert tagged_bite["code"] == "1.1a" and shared_bite["code"] == "1.1b"
 
 
 def test_bite_id_is_stable_for_the_same_content():
@@ -124,6 +126,7 @@ def test_slugify_is_ascii_hyphenated_and_capped():
 def test_run_theme_batches_builds_the_session_tree(tmp_path, monkeypatch):
     monkeypatch.setattr(tb, "BATCHES_PATH", tmp_path)
     monkeypatch.setattr(tb, "QUERY_PAUSE_SECONDS", 0)
+    monkeypatch.setattr(tb, "build_witness_view", lambda path: None)
     queries_run = []
 
     async def fake_run_query(query):
@@ -152,6 +155,7 @@ def test_run_theme_batches_builds_the_session_tree(tmp_path, monkeypatch):
     first_thesis = json.loads((session / theme_dirs[0] / "thesis-01.json").read_text())
     assert len(first_thesis["bites"]) == 2
     assert "synthesis" not in first_thesis
+    assert first_thesis["bites"][0]["code"] == "1.1a"
     assert first_thesis["bites"][0]["verified"] == {"A": True, "B": True}
     assert first_thesis["bites"][0]["retrieval"]["A"] == {"label": "ok", "reason": "fine", "lineage": []}
     assert set(first_thesis["bites"][0]["bite_id"]) == {"A", "B"}
@@ -162,3 +166,31 @@ def test_run_theme_batches_builds_the_session_tree(tmp_path, monkeypatch):
     assert set(consolidated["books"]) == {"A", "B"}
     assert [t["theme_folder"] for t in consolidated["theses"]] == [theme_dirs[0], theme_dirs[0], theme_dirs[1]]
     assert consolidated["theses"][0]["thesis"] == "Both books describe the crowd as a force that reshapes the self."
+
+
+def test_run_theme_batches_also_writes_the_witness_view(tmp_path, monkeypatch):
+    monkeypatch.setattr(tb, "BATCHES_PATH", tmp_path)
+    monkeypatch.setattr(tb, "QUERY_PAUSE_SECONDS", 0)
+    monkeypatch.setattr("ParallelProse.witness_view.context_window", lambda book, quote: None)
+
+    async def fake_run_query(query):
+        return {"answer": answer(f"agree on {query[:10]}"), "corpora": corpora_for()}
+
+    monkeypatch.setattr(tb, "run_query", fake_run_query)
+    batch_file = tmp_path / "themes.md"
+    batch_file.write_text("Theme 1: T\n\nThesis 1.1: x\n  Query 1.1a: a shared query\n")
+
+    out = asyncio.run(tb.run_theme_batches(batch_file))
+
+    witness_path = out.parent / f"witness_view_augustine_debord_{out.parent.name}.json"
+    assert witness_path.exists()
+    witness = json.loads(witness_path.read_text())
+    assert witness["session"] == out.parent.name and witness["project"] == "augustine_debord"
+    assert {r["corpus_id"] for r in witness["records"]} == {"A", "B"}
+    record = next(r for r in witness["records"] if r["corpus_id"] == "A")
+    assert record["query_code"] == "1.1a" and record["query"] == "a shared query"
+    assert record["edition"]["translator"] == "Edward Bouverie Pusey"
+    keys = list(record)
+    assert keys.index("quote") < keys.index("finding")
+    for forbidden in ("agreement", "disagreement", "needs_revision"):
+        assert forbidden not in json.dumps(witness)

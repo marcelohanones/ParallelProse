@@ -2,6 +2,7 @@ import difflib
 import math
 import re
 import unicodedata
+from bisect import bisect_right
 from collections import Counter
 from functools import lru_cache
 
@@ -63,17 +64,59 @@ def _differences(quote: str, window: str, limit: int = 4) -> list[list[str]]:
 
 
 @lru_cache
+def _chapters(book):
+    """The book's chapters, parsed once per book and shared by every cache below."""
+    return load_corpus(str(book.path))
+
+
+@lru_cache
 def book_paragraphs(book) -> tuple[list[str], list[int]]:
     """The book's paragraphs in match_form, and where each one starts in the paragraphs joined with a space.
     _load_epub joins a chapter's paragraphs with a blank line, so splitting on it gives them back. Cached per
     book: a session runs many queries against the same two books, and this parses the epub from scratch."""
-    paragraphs = [match_form(p) for chapter in load_corpus(str(book.path))
+    paragraphs = [match_form(p) for chapter in _chapters(book)
                   for p in chapter.page_content.split("\n\n") if p.strip()]
     starts, position = [], 0
     for paragraph in paragraphs:
         starts.append(position)
         position += len(paragraph) + 1
     return paragraphs, starts
+
+
+@lru_cache
+def _book_raw_paragraphs(book) -> list[str]:
+    """The book's paragraphs as written — same split as book_paragraphs, no match_form — for human-readable display."""
+    return [p for chapter in _chapters(book) for p in chapter.page_content.split("\n\n") if p.strip()]
+
+
+@lru_cache
+def _book_sentences(book) -> list[str]:
+    """Every raw sentence in the book, flattened across paragraphs into one book-wide reading order."""
+    return [s for p in _book_raw_paragraphs(book)
+            for s in re.split(r"(?<=[.!?;:])\s+", re.sub(r"\s+", " ", p).strip()) if s.strip()]
+
+
+def context_window(book, quote: str, around: int = 1) -> str | None:
+    """`around` raw sentences before and after the sentence(s) the quote's match_form overlaps, joined with the
+    matched span itself. None if no sentence in the book overlaps the quote (an echo, an invention, or a number
+    mismatch that makes the match fuzzy). Locates the quote by character position in the joined sentence forms,
+    not by per-sentence substring containment: a short quote is a trivial substring of almost any short sentence
+    fragment (this text's heavy semicolon/colon use over-splits plenty of them), so containment alone matches
+    everywhere; a character span can only match where the quote actually sits."""
+    quote_form = match_form(quote, is_quote=True)
+    sentences = _book_sentences(book)
+    forms = [match_form(s) for s in sentences]
+    starts, position = [], 0
+    for form in forms:
+        starts.append(position)
+        position += len(form) + 1
+    idx = " ".join(forms).find(quote_form)
+    if idx == -1:
+        return None
+    first = bisect_right(starts, idx) - 1
+    last = bisect_right(starts, idx + len(quote_form) - 1) - 1
+    lo, hi = max(0, first - around), min(len(sentences), last + 1 + around)
+    return " ".join(sentences[lo:hi])
 
 
 def verify_quotes(answer: ComposerAnswer, corpora: dict, query: str) -> dict[str, dict]:

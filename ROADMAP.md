@@ -871,13 +871,26 @@ the quote instead of living only in the catalog. **Synergy:** needed by item 39;
 
 ### 39. The witness view: one export per session, quotes with provenance
 
-**Status: not started.** **What:** a function that reads a session's `<timestamp>_thesis.json` and writes
+**Status: done (2026-10-11).** **What:** a function that reads a session's `<timestamp>_thesis.json` and writes
 `witness_view_<project>_<session>.json`, one record per book per query: `bite_id`, session, query code and query text,
 `corpus_id`, edition, `retrieval` (label, `side_is_target`, `forced_retriever`, lineage), the quote, the whole
 `verification` object, `quote_selection`, and the finding in a block of its own, after the quote. It never carries
 `agreement`, `disagreement`, `needs_revision` or anything derived from them, never a quote for a book labelled
 `silent`, and never `verification.nearest` under the `quote` key. A `context_window` of one or two sentences either
 side of the quote, cut from the book's text, belongs to this record.
+
+**Built as:** `src/ParallelProse/witness_view.py` (`build_witness_view`), called from `run_theme_batches` right
+after `consolidate_thesis_file`. Two gaps surfaced while building, not in the original text: the query's own code
+(`"1.1a"`) was being discarded in the batch loop — `save_bite` now takes and stores it as `"code"` — and no
+function cut human-readable text from the book (`book_paragraphs` only returns `match_form`-normalized text for
+matching). `context_window` (new, in `quote_check.py`) solves that, backed by a raw-paragraph/sentence cache
+sharing the same parsed epub as `book_paragraphs` (`_chapters`, cached). `reason` is left out of the `retrieval`
+sub-object (not in the given field list); everything else follows the spec as written. One real bug caught before
+it shipped: the first `context_window` draft matched sentences by substring containment, which let a short quote
+trivially match tiny over-split sentence fragments throughout the whole book, returning most of it as "context" —
+fixed by locating the quote's character span in the joined book text instead (the same substring-search style
+`book_paragraphs`/`verify_quotes` already use), confirmed against the real "chastity" quote (now returns one
+sentence before and after, ~800 characters, not 400KB). 109/109 tests pass.
 
 **Why:** the comparison fields are a hypothesis the reader cannot un-see, and this file's reader is the side whose job
 is to produce the comparison — handing over the system's own reading of convergence anchors that work to it. They are

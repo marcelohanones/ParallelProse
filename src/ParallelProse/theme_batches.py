@@ -12,6 +12,7 @@ from ParallelProse.agent import ComposerAnswer, run_query
 from ParallelProse.catalog import CATALOG, DATA_DIR
 from ParallelProse.consolidate_thesis import consolidate_thesis_file
 from ParallelProse.quote_check import match_form, select_quotes, verified_flags, verify_quotes
+from ParallelProse.witness_view import build_witness_view
 
 PROJECT = "augustine_debord"
 BATCHES_PATH = DATA_DIR / "theme_batches"
@@ -70,13 +71,14 @@ def slugify(title: str, limit: int = 40) -> str:
     return slug[:limit].rstrip("-")
 
 
-def save_bite(path: Path, theme: str, thesis: str, query: str, answer: ComposerAnswer, extra: dict | None = None) -> None:
+def save_bite(path: Path, theme: str, thesis: str, code: str, query: str, answer: ComposerAnswer,
+              extra: dict | None = None) -> None:
     """Appends one finished bite to the thesis file at path, creating it with theme/thesis if it doesn't exist yet. `extra` is stored beside the answer, never inside it."""
     if not path.exists():
         session = {"theme": theme, "thesis": thesis, "bites": []}
     else:
         session = json.loads(path.read_text())
-    session["bites"].append({"query": query, "answer": answer.model_dump(), **(extra or {})})
+    session["bites"].append({"code": code, "query": query, "answer": answer.model_dump(), **(extra or {})})
     path.write_text(json.dumps(session, indent=2))
 
 
@@ -138,14 +140,16 @@ async def run_theme_batches(batch_file: Path) -> Path:
         theme_dir.mkdir()
         for thesis in theme.theses:
             path = theme_dir / f"thesis-{thesis.number:02d}.json"
-            for _, query, side in thesis.queries:
+            for code, query, side in thesis.queries:
                 if not first_query:
                     await asyncio.sleep(QUERY_PAUSE_SECONDS)
                 first_query = False
                 answer, extra, _ = await answer_query(query, side)
-                save_bite(path, theme.title, thesis.text, query, answer, extra=extra)
+                save_bite(path, theme.title, thesis.text, code, query, answer, extra=extra)
 
-    return consolidate_thesis_file(session)
+    thesis_path = consolidate_thesis_file(session)
+    build_witness_view(thesis_path)
+    return thesis_path
 
 
 if __name__ == "__main__":

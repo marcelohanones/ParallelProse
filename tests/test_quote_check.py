@@ -58,7 +58,8 @@ def test_bare_thesis_number_in_the_corpus_is_reported_as_its_own_status():
     assert detail["nearest"] == "the spectacle. 24 the spectacle is everywhere"
 
 
-def test_changed_punctuation_inside_the_quote_is_still_not_found():
+def test_changed_punctuation_inside_the_quote_is_still_not_found(monkeypatch):
+    monkeypatch.setattr(qc, "book_paragraphs", lambda book: (["nothing like the quote at all"], [0]))
     detail = check("passions, for the auditor", "passions? for the auditor is not called on to relieve")
 
     assert detail["status"] == "not_found"
@@ -67,21 +68,69 @@ def test_changed_punctuation_inside_the_quote_is_still_not_found():
     assert 0 < detail["similarity"] < 1
 
 
-def test_book_paragraphs_splits_on_the_blank_line_load_corpus_uses_between_paragraphs(monkeypatch):
-    class Chapter:
-        def __init__(self, page_content):
-            self.page_content = page_content
+class Chapter:
+    def __init__(self, page_content):
+        self.page_content = page_content
 
-    class Book:
-        path = "irrelevant.epub"
 
-    monkeypatch.setattr(qc, "load_corpus", lambda path: [Chapter("First paragraph.\n\nSecond paragraph.")])
+class Book:
+    """A fresh class per test file import is enough: _chapters/book_paragraphs/etc. cache by instance identity,
+    and every test that needs a stub book makes its own via stub_book(), never sharing one across tests."""
+    path = "irrelevant.epub"
+
+
+def stub_book(monkeypatch, *paragraphs):
+    monkeypatch.setattr(qc, "load_corpus", lambda path: [Chapter("\n\n".join(paragraphs))])
+    qc._chapters.cache_clear()
     qc.book_paragraphs.cache_clear()
+    qc._book_raw_paragraphs.cache_clear()
+    qc._book_sentences.cache_clear()
+    return Book()
 
-    paragraphs, starts = qc.book_paragraphs(Book())
+
+def test_book_paragraphs_splits_on_the_blank_line_load_corpus_uses_between_paragraphs(monkeypatch):
+    book = stub_book(monkeypatch, "First paragraph.", "Second paragraph.")
+
+    paragraphs, starts = qc.book_paragraphs(book)
 
     assert paragraphs == ["first paragraph.", "second paragraph."]
     assert starts == [0, len("first paragraph.") + 1]
+
+
+def test_book_raw_paragraphs_keeps_the_original_case_and_punctuation(monkeypatch):
+    book = stub_book(monkeypatch, "First Paragraph!", "Second paragraph.")
+
+    assert qc._book_raw_paragraphs(book) == ["First Paragraph!", "Second paragraph."]
+
+
+def test_book_sentences_flattens_every_paragraph_in_reading_order(monkeypatch):
+    book = stub_book(monkeypatch, "One. Two.", "Three.")
+
+    assert qc._book_sentences(book) == ["One.", "Two.", "Three."]
+
+
+def test_context_window_returns_one_sentence_either_side(monkeypatch):
+    book = stub_book(monkeypatch, "Before this. The quoted sentence. After this.")
+
+    assert qc.context_window(book, "The quoted sentence.") == "Before this. The quoted sentence. After this."
+
+
+def test_context_window_spans_a_multi_sentence_quote(monkeypatch):
+    book = stub_book(monkeypatch, "Before. First half. Second half. After.")
+
+    assert qc.context_window(book, "First half. Second half.") == "Before. First half. Second half. After."
+
+
+def test_context_window_has_nothing_before_the_first_sentence(monkeypatch):
+    book = stub_book(monkeypatch, "The quoted sentence. After this.")
+
+    assert qc.context_window(book, "The quoted sentence.") == "The quoted sentence. After this."
+
+
+def test_context_window_is_none_when_the_quote_matches_nothing(monkeypatch):
+    book = stub_book(monkeypatch, "Completely unrelated text.")
+
+    assert qc.context_window(book, "nothing like this exists") is None
 
 
 def test_a_colon_mid_sentence_in_the_corpus_is_still_matched_verbatim():
