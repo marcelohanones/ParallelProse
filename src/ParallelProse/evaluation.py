@@ -4,7 +4,7 @@ from collections import Counter
 from hashlib import sha256
 from pathlib import Path
 
-from langsmith import Client
+from langsmith import Client, aevaluate
 
 from pydantic import BaseModel, Field, ConfigDict, TypeAdapter, ValidationError, model_validator, field_validator
 from typing import TypedDict, Literal, Annotated
@@ -368,7 +368,55 @@ EVALUATORS = [anchors_evaluator, labels_evaluator]            # deterministic, f
 JUDGES = [faithfulness_evaluator, attribution_evaluator]      # one judge-model call per judged book
 
 
+def configuration() -> dict:
+    """What the live objects are set to, read rather than typed, so an experiment's record cannot disagree with the
+    code that produced it. Scores move with the chunk sizes and with either model, so all of them belong here."""
+    from ParallelProse.agent import llm                 # imported here: both open stores / clients at import time
+    from ParallelProse.judges import JUDGE_MODEL
+    from ParallelProse.mcp_tools import REGISTRY
+
+    splitters = {}
+    for cid, retrieval in sorted(REGISTRY.items()):
+        for part, config in (("child", retrieval.child_config), ("parent", retrieval.parent_config)):
+            splitters[f"{part}_chunk_size_{cid}"] = config.chunk_size
+            splitters[f"{part}_overlap_{cid}"] = config.chunk_overlap
+    return {**splitters, "system_model": llm.model_name, "judge_model": JUDGE_MODEL}
+
+
+async def run_experiment(entries: list[GoldenEntry], *, judges: bool = False, repetitions: int = 3,
+                         concurrency: int = 2, prefix: str = "pp") -> str:
+    """Runs the golden set as one LangSmith experiment and returns its name. The dataset is pushed (or reused) first,
+    so the experiment is always tied to the golden set it was scored against. Concurrency is capped because every
+    example shares one MCP server and one model rate limit; a throttled example lands as a low score, not a crash."""
+    dataset = push_golden_set(entries)
+    results = await aevaluate(
+        golden_target,
+        data=dataset,
+        evaluators=EVALUATORS + (JUDGES if judges else []),
+        metadata={**configuration(), "judges": judges, "golden_set": dataset, "repetitions": repetitions},
+        num_repetitions=repetitions,
+        max_concurrency=concurrency,
+        experiment_prefix=prefix,
+    )
+    return results.experiment_name
+
+
 if __name__ == "__main__":
+    import argparse
+    import asyncio
+
+    parser = argparse.ArgumentParser(description="Validate the golden set, push it, and optionally run an experiment.")
+    parser.add_argument("--run", action="store_true", help="run a LangSmith experiment over the golden set")
+    parser.add_argument("--judges", action="store_true", help="also run the two LLM judges (one call per book)")
+    parser.add_argument("--repetitions", type=int, default=3)
+    parser.add_argument("--concurrency", type=int, default=2)
+    args = parser.parse_args()
+
     golden_entries = load_golden_set(golden_set_path)
     print(f"{len(golden_entries)} entries accepted")
     print(f"dataset: {push_golden_set(golden_entries)}")
+    if args.run:
+        print(f"configuration: {configuration()}")
+        name = asyncio.run(run_experiment(golden_entries, judges=args.judges, repetitions=args.repetitions,
+                                          concurrency=args.concurrency))
+        print(f"experiment: {name}")

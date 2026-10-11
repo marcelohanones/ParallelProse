@@ -9,7 +9,7 @@ from ParallelProse.agent import ComposerAnswer, CorpusFinding
 from ParallelProse import evaluation as ev
 from ParallelProse.evaluation import (EVALUATORS, JUDGES, GoldenEntry, OkExpectation, anchor_hits,
                                       anchors_evaluator, golden_target, label_agreement, labels_evaluator,
-                                      push_golden_set, run_golden_entry)
+                                      push_golden_set, run_experiment, run_golden_entry)
 
 BITE_EXTRA_KEYS = {"quote_selection", "side_is_target", "verified", "verification", "retrieval"}
 
@@ -241,3 +241,48 @@ def test_every_adapter_has_argument_names_langsmith_accepts():
     for evaluator in EVALUATORS + JUDGES:
         assert set(inspect.signature(evaluator).parameters) <= {"run", "example", "inputs", "outputs",
                                                                 "reference_outputs", "attachments"}
+
+
+def fake_aevaluate(monkeypatch):
+    """Captures what run_experiment would send LangSmith; no network, no runs."""
+    calls = {}
+
+    async def aevaluate(target, **kwargs):
+        calls.update(target=target, **kwargs)
+        return type("Results", (), {"experiment_name": "pp-test-1"})()
+
+    monkeypatch.setattr(ev, "aevaluate", aevaluate)
+    monkeypatch.setattr(ev, "push_golden_set", lambda entries: "golden-test-abcd1234")
+    monkeypatch.setattr(ev, "configuration", lambda: {"child_chunk_size_A": 400, "system_model": "gpt-4o-mini"})
+    return calls
+
+
+def test_an_experiment_records_the_live_configuration_and_runs_only_the_free_evaluators(monkeypatch):
+    calls = fake_aevaluate(monkeypatch)
+
+    assert asyncio.run(run_experiment(two_entries())) == "pp-test-1"
+    assert calls["target"] is golden_target and calls["data"] == "golden-test-abcd1234"
+    assert calls["evaluators"] == EVALUATORS
+    assert calls["metadata"] == {"child_chunk_size_A": 400, "system_model": "gpt-4o-mini",
+                                 "judges": False, "golden_set": "golden-test-abcd1234", "repetitions": 3}
+    assert calls["num_repetitions"] == 3 and calls["max_concurrency"] == 2
+
+
+def test_asking_for_judges_adds_them_and_says_so_in_the_metadata(monkeypatch):
+    calls = fake_aevaluate(monkeypatch)
+
+    asyncio.run(run_experiment(two_entries(), judges=True, repetitions=1, concurrency=1))
+
+    assert calls["evaluators"] == EVALUATORS + JUDGES
+    assert calls["metadata"]["judges"] is True and calls["metadata"]["repetitions"] == 1
+    assert calls["num_repetitions"] == 1 and calls["max_concurrency"] == 1
+
+
+def test_the_configuration_is_read_from_the_live_retrieval_objects():
+    from ParallelProse.mcp_tools import REGISTRY
+
+    config = ev.configuration()
+
+    assert config["child_chunk_size_A"] == REGISTRY["A"].child_config.chunk_size
+    assert config["parent_chunk_size_B"] == REGISTRY["B"].parent_config.chunk_size
+    assert config["system_model"] == "gpt-4o-mini" and config["judge_model"] == "gpt-4o"

@@ -631,7 +631,32 @@ faithfulness agrees 27/27; attribution 26/27 after its prompt was changed to dec
 by shared words (it answered "both" on vocabulary overlap; g05 A remains, a finding that borrows the other book's
 word "spectacle"). First-run findings, one run only: every one of 6 disagreeing labels is a false `ok` (a book
 expected silent labelled `ok`), 26 of 27 findings claim more than their quote (D3), and 3 of 4 wrong-passage quotes
-came from `select_quotes`' lexical replacement (item 29). 30.4 not started. **What:** four functions, each built in order, each one's output the next one's input:
+came from `select_quotes`' lexical replacement (item 29). 30.4 in progress: 30.4.1 `push_golden_set` done
+2026-10-10 (the 16 entries are the LangSmith dataset `golden-augustine_debord-e90f8206`, each entry split into
+inputs / reference outputs / metadata; the name carries a hash of the entries, so an unchanged push reuses the
+dataset and an edited golden set gets its own, leaving old experiments comparable). 30.4.2 `anchor_hits` and the
+other adapters done 2026-10-10: `golden_target(inputs)` plus one evaluator per metric, each a wrapper over the
+functions above, which keep their signatures and stay callable without LangSmith. One key per book per metric
+(`anchor_hits_A`, `label_agreement_B`, ...), since LangSmith averages per key and a shared key would merge the two
+books; a book with nothing to answer omits its key rather than scoring 0; the per-book detail (missing anchors, the
+expected/final pair) rides along in each result's `comment`. `EVALUATORS` (deterministic, free) is kept apart from
+`JUDGES` (one judge-model call per judged book) so a configuration sweep can skip the paid calls.
+`run_golden_entry` now delegates to `run_golden_query(id, query, side)`, so the target can work from an example's
+inputs alone. 30.4.3 `run_experiment` done 2026-10-10: it pushes (or reuses) the dataset, calls `aevaluate` with
+`golden_target` and the chosen evaluators, `num_repetitions=3` and `max_concurrency=2` (every example shares the one
+MCP server `run_query` starts per process and one model rate limit; a throttled example lands as a low score, not a
+crash), and stores in the experiment's metadata the configuration read from the live objects — `configuration()`
+takes the four splitter settings per book from `mcp_tools.REGISTRY` and both model names, never a typed label — plus
+the `judges` flag and the dataset name. CLI: `python -m ParallelProse.evaluation [--run] [--judges] [--repetitions N]
+[--concurrency N]`. **No local per-book/per-cell summary:** LangSmith's UI gives the per-key averages and filters by
+each example's metadata (`specificity`, `wording`, `known_failure`), so E1's cells are read there (decided
+2026-10-10). **Open:** no experiment has been run yet; `LANGSMITH_TRACING` is kept false while building and turned on
+for the experiment command, so each score has its graph trace behind it. **Watch when varying chunk size:**
+`add_parent_child_docs` (retrieve.py:91) decides whether to rebuild by comparing chunk *counts*, not the chunks
+themselves, so a new `chunk_size` that happens to yield the same count would keep the old embeddings while
+`configuration()` records the new setting — pass `rebuild=True` once, or check the count actually moved. (The
+repeated `Created a chunk of size ... longer than the specified 400` lines come from that counting re-split, not from
+re-embedding; kept visible on purpose as a reminder of the paragraph-keeping tradeoff from items 13/14/31.) **What:** four functions, each built in order, each one's output the next one's input:
 
 - **30.1 Golden set** — `data/golden_set_augustine_debord.json`, written by Claude web from the brief
   `docs/golden_set_spec.md` (which carries a complete example of the file) and read by `load_golden_set` (new module
