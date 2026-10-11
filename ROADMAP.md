@@ -909,7 +909,7 @@ that made the golden set land on the first try (item 30.1).
 
 ### 40. Idea units: a spec and a validator
 
-**Status: not started.** **What:** `docs/idea_unit_spec.md` plus `load_idea_units` in a new module, built the way item
+**Status: done (2026-10-11).** **What:** `docs/idea_unit_spec.md` plus `load_idea_units` in a new module, built the way item
 30.1 was — the spec carries one complete example, and the loader rejects the file before anything reads it. The rules:
 
 - `tipo` is one of convergence, divergence, single voice, false positive. Four, not three: a pair whose shared
@@ -933,6 +933,21 @@ first try. Calibration cases, all already in hand: a quote the current check rej
 `silent` with `near_miss: true` on a pair the citation bank rates highly, which the taxonomy has to adjudicate as a
 divergence of axis or a false positive. **Synergy:** depends on items 36 and 37; its output is the only file a
 script-writing session reads, which is what puts the quotes out of reach rather than merely off-limits.
+
+**Built as:** `src/ParallelProse/idea_units.py` (`IdeaUnit`, `load_idea_units`, `build_bites_index`) +
+`docs/idea_unit_spec.md`, mirroring `evaluation.py`'s `GoldenEntry`/`load_golden_set` structure. Field names and
+enum values are English (`type`, `anchoring`, `mechanism_a/b`, `form_a/b`, `shared_structure`, `divergence_axis`,
+`falsification_test`), not the original proposal's Portuguese — confirmed with the user, since the roadmap's own
+`tipo`/`Ancoragem` backticks were quoting the source proposal, not mandating the schema's language. `anchoring`
+resolves against a `bite_id -> {corpus_id, quote}` index built by scanning every `witness_view_*.json` under a
+project's sessions (item 39's output), then re-run through `_phrase_pattern` against `book_paragraphs` — the same
+check `_book_problems` runs for golden-set anchors, independent of the bite's own stored `verification.status`.
+The signature-word cross-contamination list is a small hardcoded dict (confirmed with the user it isn't a revival
+of item 34's removed vocabulary system — different scope, flag-only, never rejects). `promotion` ships as a
+structurally-validated optional skeleton (`decider`, `null_search_ref`, `date`); cross-checking it against a real
+null-search registry is item 43's job. Verified end-to-end against the real book and the real "chastity" quote
+(item 37's own example): a unit anchored to it is accepted, and corrupting the indexed quote text is rejected with
+`not found in book A`. 125/125 tests pass.
 
 ### 41. `ok` defined, the false `ok` fixed, and `silent` split
 
