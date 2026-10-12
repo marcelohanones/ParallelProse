@@ -128,10 +128,11 @@ def verify_quotes(answer: ComposerAnswer, corpora: dict, query: str) -> dict[str
     in the retrieved chunks, but the book itself has it — a retrieval gap, not an invented quote); not_found (the
     book does not contain it either). Failed quotes also carry similarity, nearest and differences."""
     query_form = match_form(query, is_quote=True)
+    findings_by_cid = {f.corpus_id: f for f in answer.unique_findings}
     details = {}
-    for finding in answer.unique_findings:
-        cid = finding.corpus_id
-        if finding.quote is None:
+    for cid in corpora:
+        finding = findings_by_cid.get(cid)
+        if finding is None or finding.quote is None:
             details[cid] = {"status": "no_quote"}
             continue
         quote_form = match_form(finding.quote, is_quote=True)

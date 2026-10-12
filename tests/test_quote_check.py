@@ -160,6 +160,15 @@ def test_quote_missing_from_chunks_and_from_the_book_is_not_found(monkeypatch):
     assert "similarity" in detail
 
 
+def test_a_book_the_composer_omitted_is_verified_as_no_quote():
+    answer = ComposerAnswer(agreement="", disagreement="", unique_findings=[])
+
+    details = verify_quotes(answer, {"A": {"chunks": ["anything"]}, "B": {"chunks": ["anything"]}}, QUERY)
+
+    assert details == {"A": {"status": "no_quote"}, "B": {"status": "no_quote"}}
+    assert verified_flags(details) == {"A": None, "B": None}
+
+
 def test_no_quote_has_no_flag():
     answer = ComposerAnswer(agreement="", disagreement="", unique_findings=[
         CorpusFinding(corpus_id="A", claim_in_passage="query content is absent", quote=None)])
