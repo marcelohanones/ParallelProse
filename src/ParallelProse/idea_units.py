@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError,
 
 from ParallelProse.catalog import CATALOG
 from ParallelProse.evaluation import _phrase_pattern
+from ParallelProse.null_search import NullSearch
 from ParallelProse.quote_check import book_paragraphs
 from ParallelProse.survey import term_pattern
 
@@ -26,7 +27,9 @@ class FalsificationTest(BaseModel):
 
 
 class Promotion(BaseModel):
-    """Structurally validated only — cross-checking null_search_ref against a real registry is item 43's job."""
+    """The decision to promote, named. null_search_ref must resolve in the null-search registry, and that
+    search must have been run for this unit's own falsification test — a promotion is never licensed by
+    silence alone."""
     model_config = ConfigDict(extra="forbid")
     decider: str = Field(min_length=1)
     null_search_ref: str = Field(min_length=1)
@@ -115,16 +118,38 @@ def _contamination_flags(unit: IdeaUnit, bites_index: dict[str, dict]) -> list[s
     return [f"{unit.id}: anchored only in {anchored_side} but uses {other_side}'s words {hits}"] if hits else []
 
 
+def _promotion_problems(unit: IdeaUnit, null_searches: dict[str, NullSearch] | None) -> list[str]:
+    """A promotion must point at a registered null search run for this unit's own test: the gate reads the
+    search, never the silence. With no registry given, any promotion is unverifiable and rejected."""
+    if unit.promotion is None:
+        return []
+    ref = unit.promotion.null_search_ref
+    if null_searches is None:
+        return [f"{unit.id}: promotion cites {ref!r} but no null-search registry was given"]
+    record = null_searches.get(ref)
+    if record is None:
+        return [f"{unit.id}: promotion cites unknown null_search_ref {ref!r}"]
+    problems = []
+    if record.unit != unit.id:
+        problems.append(f"{unit.id}: null search {ref!r} belongs to {record.unit}")
+    if unit.falsification_test is not None and record.side != unit.falsification_test.side:
+        problems.append(f"{unit.id}: null search {ref!r} ran against side {record.side}, "
+                        f"but the unit's test targets {unit.falsification_test.side}")
+    return problems
+
+
 def _unit_id(raw: list, position: int) -> str:
     entry = raw[position]
     return entry["id"] if isinstance(entry, dict) and entry.get("id") else f"entry {position + 1}"
 
 
-def load_idea_units(path: Path, bites_index: dict[str, dict]) -> tuple[list[IdeaUnit], list[str]]:
-    """Reads the idea unit bank and rejects it, before any script reads it, if an entry is malformed or cites a
-    quote that doesn't actually exist in its book. A one-sided unit borrowing the other book's vocabulary is
-    returned with a flag instead, since that pattern can be legitimate. Raises one ValueError listing every
-    rejection; returns (units, flags) when the file is structurally and referentially sound."""
+def load_idea_units(path: Path, bites_index: dict[str, dict],
+                    null_searches: dict[str, NullSearch] | None = None) -> tuple[list[IdeaUnit], list[str]]:
+    """Reads the idea unit bank and rejects it, before any script reads it, if an entry is malformed, cites a
+    quote that doesn't actually exist in its book, or carries a promotion that no registered null search
+    backs. A one-sided unit borrowing the other book's vocabulary is returned with a flag instead, since that
+    pattern can be legitimate. Raises one ValueError listing every rejection; returns (units, flags) when the
+    file is structurally and referentially sound."""
     raw = json.loads(path.read_text())
     if not isinstance(raw, list):
         raise ValueError("the idea unit bank must be a JSON list of entries")
@@ -144,6 +169,7 @@ def load_idea_units(path: Path, bites_index: dict[str, dict]) -> tuple[list[Idea
 
     for unit in units:
         problems += _anchoring_problems(unit, bites_index)
+        problems += _promotion_problems(unit, null_searches)
     if problems:
         raise ValueError("\n".join(problems))
 

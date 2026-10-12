@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from ParallelProse import idea_units as iu
 from ParallelProse.idea_units import IdeaUnit, build_bites_index, load_idea_units
+from ParallelProse.null_search import NullSearch, load_null_searches, record_null_search
 
 
 def convergence_unit(**overrides):
@@ -154,3 +155,72 @@ def test_a_genuinely_cross_book_unit_is_never_flagged(tmp_path, monkeypatch):
     })
 
     assert flags == []
+
+def null_search(**overrides):
+    base = dict(ref="n01", unit="u01", term="a searched term", side="A", corpus="A", date="2026-10-26")
+    base.update(overrides)
+    return NullSearch(**base)
+
+
+def test_load_null_searches_rejects_a_repeated_ref(tmp_path):
+    path = tmp_path / "null_searches.json"
+    path.write_text(json.dumps([null_search().model_dump(), null_search().model_dump()]))
+
+    with pytest.raises(ValueError, match="ref used 2 times"):
+        load_null_searches(path)
+
+
+def test_load_null_searches_missing_file_is_an_empty_registry(tmp_path):
+    assert load_null_searches(tmp_path / "absent.json") == {}
+
+
+def test_record_null_search_appends_once(tmp_path):
+    path = tmp_path / "null_searches.json"
+    record_null_search(path, null_search())
+    record_null_search(path, null_search())
+
+    assert [record.ref for record in load_null_searches(path).values()] == ["n01"]
+
+
+def test_load_idea_units_accepts_a_search_backed_promotion(tmp_path, monkeypatch):
+    monkeypatch.setattr(iu, "book_paragraphs", lambda book: (["a real quote"], [0]))
+    path = tmp_path / "idea_units.json"
+    path.write_text(json.dumps([convergence_unit(
+        promotion={"decider": "me", "null_search_ref": "n01", "date": "2026-10-26"})]))
+
+    units, flags = load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "quote": "a real quote"}},
+                                   null_searches={"n01": null_search()})
+
+    assert len(units) == 1 and flags == []
+
+
+def test_load_idea_units_rejects_a_promotion_without_a_registry(tmp_path, monkeypatch):
+    monkeypatch.setattr(iu, "book_paragraphs", lambda book: (["a real quote"], [0]))
+    path = tmp_path / "idea_units.json"
+    path.write_text(json.dumps([convergence_unit(
+        promotion={"decider": "me", "null_search_ref": "n01", "date": "2026-10-26"})]))
+
+    with pytest.raises(ValueError, match="no null-search registry"):
+        load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "quote": "a real quote"}})
+
+
+def test_load_idea_units_rejects_an_unknown_null_search_ref(tmp_path, monkeypatch):
+    monkeypatch.setattr(iu, "book_paragraphs", lambda book: (["a real quote"], [0]))
+    path = tmp_path / "idea_units.json"
+    path.write_text(json.dumps([convergence_unit(
+        promotion={"decider": "me", "null_search_ref": "n99", "date": "2026-10-26"})]))
+
+    with pytest.raises(ValueError, match="unknown null_search_ref"):
+        load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "quote": "a real quote"}},
+                        null_searches={"n01": null_search()})
+
+
+def test_load_idea_units_rejects_a_null_search_run_against_another_side(tmp_path, monkeypatch):
+    monkeypatch.setattr(iu, "book_paragraphs", lambda book: (["a real quote"], [0]))
+    path = tmp_path / "idea_units.json"
+    path.write_text(json.dumps([convergence_unit(
+        promotion={"decider": "me", "null_search_ref": "n01", "date": "2026-10-26"})]))
+
+    with pytest.raises(ValueError, match="ran against side B"):
+        load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "quote": "a real quote"}},
+                        null_searches={"n01": null_search(side="B", corpus="B")})

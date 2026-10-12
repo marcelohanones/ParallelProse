@@ -56,7 +56,24 @@ set's fixed 16. This example shows one complete entry. Text in angle brackets de
 | `falsification_test` | A query, phrased exactly like an ordinary batch query, that would find the counter-example to `shared_structure` if one exists in the declared `side`'s book. **(checked)** Required for every type except `single_voice`. |
 | `falsification_single_voice` | What, if found in the silent book, would break the claim that it stays silent. **(checked)** Required only for `single_voice`, and only then — it has no target side, because the test is for absence, not for a specific book's claim. |
 | `anchoring` | A list of `bite_id`, never quoted text. **(checked)** Every id must resolve to a real bite whose quote is independently found in its own book — the same check the golden set's anchors pass, with no human countersignature needed. |
-| `promotion` | `null` until a falsification round (a future item) registers a null search against this unit's test. When set: `decider`, `null_search_ref`, `date`, all required. Not cross-checked against a real registry yet — this field is a placeholder for when one exists. |
+| `promotion` | `null` until a falsification round registers a null search against this unit's test. When set: `decider`, `null_search_ref`, `date`, all required. **(checked)** `null_search_ref` must resolve in the null-search registry, and that record must name this unit and have been run against this unit's own falsification side — a promotion is never licensed by silence alone. |
+
+## The null-search registry
+
+A falsification test is a search, and its outcome is recorded as one — never read as a verdict, because from
+outside a retrieval miss and an absence in the book look identical. The registry is a JSON list beside the
+idea bank, `null_searches_<project>.json`, one record per test that was run and came back empty:
+
+```json
+[
+  { "ref": "n01", "unit": "u01", "term": "<the term or query actually searched>",
+    "side": "A", "corpus": "A", "date": "2026-10-26" }
+]
+```
+
+`load_idea_units` reads it and rejects a `promotion` whose `null_search_ref` is missing there, names another
+unit, or was run against a different side than the unit's own test. Re-running a test does not make a second
+search: a `ref` already in the file is left as it is.
 
 ## Anchoring
 

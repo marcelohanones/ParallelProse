@@ -334,7 +334,7 @@ suite is written against `Critique`'s fully settled shape, not one about to chan
 
 ### 12. Synthesis layer — connect targeted queries to a stated thesis
 
-**Status: in progress, started 2026-10-03.** **What:** a standalone, non-graph function
+**Status: discontinued 2026-10-08 (see item 34) — the synthesis layer and its session files were removed; the one sub-part that survived, composer keeping settled findings, landed 2026-10-04 (below).** **What:** a standalone, non-graph function
 (`synthesize(thesis, bites) -> Synthesis`) that reads a session log of already-finished `(query,
 ComposerAnswer)` bites plus one fixed thesis, and returns a connective narrative plus an
 `uncovered_angle`/`candidate_query` naming what the thesis still lacks — a suggestion only, never auto-run;
@@ -627,7 +627,7 @@ have no `quote_selection` and were not re-selected.
 
 ### 30. Evaluation harness
 
-**Status: in progress, started 2026-10-08.** 30.1 done 2026-10-09 (the 16-entry golden set passes
+**Status: done 2026-10-12 (the harness is built and available).** 30.1 done 2026-10-09 (the 16-entry golden set passes
 every `load_golden_set` check); 30.2 done 2026-10-09 (`answer_query` shared with
 `run_theme_batches`, `run_golden_entry` returns a bite plus `id` and per-book `chunks`; one live run of g01 checked);
 30.3 done 2026-10-09 (`anchor_hits`, `label_agreement`, and the
@@ -998,7 +998,7 @@ is `None` exactly when there's no passage (`label == "silent"`), mirroring `quot
 
 ### 43. A falsification round
 
-**Status: not started.** **What:** each idea unit's falsification test runs as a query in an ordinary batch file, with
+**Status: done 2026-10-12.** **What:** each idea unit's falsification test runs as a query in an ordinary batch file, with
 its target side tagged, and its outcome is recorded as a null search (term, side, corpus, date) instead of read as a
 verdict. No pipeline change: a falsification test is a query with a declared side, which items 17 and 20 already
 support.
@@ -1010,6 +1010,8 @@ passage, so a falsification test landing on one of those formulations would othe
 **Synergy:** runs last. It depends on item 37 (a quote nobody can locate is not evidence), on item 44 (a false `ok`
 reads as the counter-example having been found), and on item 40, where the units and their tests are written.
 
+**Built as:** `src/ParallelProse/null_search.py` (`NullSearch`, `load_null_searches`, `record_null_search`) plus the `promotion` cross-check in `load_idea_units`. A null search is one record — `{ref, unit, term, side, corpus, date}` — that a falsification test was run and came back empty: it is the search, never a verdict. `load_idea_units(path, bites_index, null_searches)` rejects a `promotion` whose `null_search_ref` does not resolve, whose record names another unit, or whose recorded `side` disagrees with the unit's own falsification test; with no registry supplied, any promotion is rejected as unverifiable. `docs/idea_unit_spec.md`'s `promotion` row states the cross-check and a new "null-search registry" section documents the file. 152/152 tests pass.
+
 ### 44. E: an evidence-only per-book verdict — the false `ok` fix
 
 **Status: done 2026-10-12 (design closed 2026-10-11) — 44.1-44.3 built; 44.4 resolved (the seed does not pin); 44.5 closed by reframing its acceptance to the defect it exists to fix (below).** Build-ready spec: `docs/item44_E_spec.md`. Decomposed into five units below, following the spec's build order; 44.1 takes the
@@ -1018,7 +1020,7 @@ spec's dual-format door, so the read-site switch (44.2) lands after the schema r
 
 **44.3 built as** (`agent.py`, `tests/test_agent.py`): `e_first` and `e_second` are graph nodes over a shared `_e_records` tail — `e_judge_first`/`e_judge_second` → `postprocess_e` → `e_record`, every slot forwarded whole (the state invariant). `e_judge_second` is the retry look's own call (same evidence-only prompt without the retry sentence, `ESecondBatch`). `route_after_e_first` returns `"retry"` when any book is left `miss`, else `"done"`; the retry arm is `retry_retriever` (a second registration of the same `retriever` callable) whose static edge lands on `e_second`, so retry-once is graph shape rather than an iteration counter. `composer` runs on `ok` books only — a silent book gets no finding, fewer than two `ok` writes agreement/disagreement deterministically, and zero `ok` skips the LLM. `reflect` shrinks to the comparison critique, short-circuits below two `ok`, and no longer returns `corpora`. Cleanup: `finalize`, `route_after_reflection`, the `PP_CRITIQUE_MODE` probe, the draft-mode `CorpusCritique`/`PerBookCritique` schemas and the `query content is absent` marker are gone. Graph: `retriever → e_first → {retry_retriever → e_second | composer} → composer → reflect → END`. 145/145 tests pass.
 
-**44.4 + 44.5 measured (2026-10-12, real calls, real graph; `PP_CRITIQUE_MODEL=gpt-4o`, `PP_CRITIQUE_TEMPERATURE=0`).** Two seeded full-set runs (`PP_SEED=44`) diffed per side: **12/32 sides retrieved different chunks, 5 of the 6 bridge sides among them** (g09 B, g10 B, g11 B, g13 A, g15 A; only g07 B stable) — the seed does not pin, so the frozen-chunk replay is a prerequisite and E is reported against a re-baseline. Provisional label line: **28/32 agree on run 1, 27/32 on run 2** (g01 A flipped ok→silent); all **6/6 bridge sides silent**; every mismatch is an A side whose answering anchor was not retrieved (g05 A, g06 A, g09 A, g10 A), with `retry_used=true` and `silence_cause=adjacent_topic`. Triage: `retry_used=true` on 5/6 bridge sides (g10 B false). Records: `data/eval/seed44_run1_2026-10-12_1555.json`, `seed44_run2_2026-10-12_1601.json`, `data/eval/seed44_gate_2026-10-12.json`. Runner: `.tmp_44_run.py`.
+**44.4 + 44.5 measured (2026-10-12, real calls, real graph; `PP_CRITIQUE_MODEL=gpt-4o`, `PP_CRITIQUE_TEMPERATURE=0`).** Two seeded full-set runs (`PP_SEED=44`) diffed per side: **12/32 sides retrieved different chunks, 5 of the 6 bridge sides among them** (g09 B, g10 B, g11 B, g13 A, g15 A; only g07 B stable) — the seed does not pin, so the frozen-chunk replay is a prerequisite and E is reported against a re-baseline. Provisional label line: **28/32 agree on run 1, 27/32 on run 2** (g01 A flipped ok→silent); all **6/6 bridge sides silent**; every mismatch is an A side whose answering anchor was not retrieved (g05 A, g06 A, g09 A, g10 A), with `retry_used=true` and `silence_cause=adjacent_topic`. Triage: `retry_used=true` on 5/6 bridge sides (g10 B false). Records: `data/eval/seed44_run1_2026-10-12_1555.json`, `seed44_run2_2026-10-12_1601.json`, `data/eval/seed44_gate_2026-10-12.json` (local; `/data` is gitignored).
 
 **44.5 closed by reframing the acceptance (2026-10-12).** The strict label line (6/6 fixed, 0 regressions) is not met, and the two seeded runs differ, so a per-side label count is not a stable measurement without frozen evidence. The acceptance is therefore the defect E exists to fix: **the six golden sides that were false `ok` — g07 B, g09 B, g10 B, g11 B, g13 A, g15 A — all come back `silent` in both runs.** The remaining four mismatches (g05 A, g06 A, g09 A, g10 A) are retrieval misses, verified by anchor check: the answering anchor occurs **0 times** in the retrieved chunks, so E is right to refuse the claim; the pre-E graph masked exactly this with draft-mode bridging. One case is E-side and unexplained: **g01 A** (anchor retrieved 1/1) labelled `ok` in run 1 and `silent` in run 2 — the parked replay would isolate it. The queued 44.5 data edits (`g13 A near_miss`, the `g17` Anon entry, `expect_e_first_retry`, the count rule) are **not applied**: they belonged to the strict measurement, not this acceptance.
 
@@ -1073,6 +1075,8 @@ and item 39's silent witness read. **Synergy:** unblocks item 43 (a false `ok` r
 been found); feeds item 40; takes the item-37 direction for book-level checks.
 
 ### Backlog (deferred, not dropped)
+
+**First evaluation experiment run.** The harness is built and available; no experiment has been run with `LANGSMITH_TRACING` on. Deferred 2026-10-12 by decision — run it when a scored, repeatable experiment is needed (it can fold in E's calibration).
 
 **Retrieval misses on four Augustine sides (g05 A, g06 A, g09 A, g10 A).** E correctly labels them `silent`; the golden anchor that would make them `ok` never reaches the chunks (verified 0 occurrences in two seeded runs). This is the whole remaining gap between the current label agreement and 32/32, and it is a retrieval problem, not a judgment one — so it belongs with the retrieval work (items 13/14/37's neighbourhood), not with E. Revisit when the retrieval side is next opened.
 
