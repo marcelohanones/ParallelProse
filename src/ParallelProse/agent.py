@@ -93,6 +93,54 @@ class PerBookCritique(BaseModel):
         description="Is exactly one entry for each book in the context, none skipped")
 
 
+# MARK: E (item 44) — the evidence-only per-book verdict
+# E judges the retrieved passages alone: the composer's draft is never in its input, and its prompt never says
+# "support". The field order below is part of the spec — p_adjacent is judged before p_answers so the theme
+# question cannot be shaded by the answer question (the bias control).
+class EVerdictBase(BaseModel):
+    """One book's evidence-only verdict, shared by both looks. EFirst adds the two retry fields; ESecond is
+    exactly this minus them, so the retry look cannot re-propose a retry."""
+    corpus_id: Literal["A", "B"] = Field(
+        description="the id of the book this verdict is about, exactly as given in the context")
+    p_adjacent: Literal["yes", "no"] = Field(
+        description="some returned chunk treats the query's theme under some proposition, whether or not it "
+                    "answers the query. Judge this on its own terms — never as 'adjacent to what I did not find'.")
+    p_answers: Literal["yes", "no"] = Field(
+        description="some returned chunk's own wording answers the query. The passage alone must state it; do not "
+                    "add a connecting step the passage does not itself state.")
+    P: str | None = Field(
+        default=None,
+        description="the proposition: the answering passage's proposition when p_answers is yes; the adjacent "
+                    "passage's proposition when p_answers is no and p_adjacent is yes; null when both are no.")
+
+
+class EFirst(EVerdictBase):
+    """E's first look: one book's evidence-only verdict plus its retry proposal. The proposal is normalized afterward (postprocess_e); it never decides anything by itself."""
+    retry: Literal["yes", "no"] = Field(
+        description="your proposal for whether a narrowed retry is worth one attempt. It is normalized outside "
+                    "this call; it never decides anything by itself.")
+    narrowed_query: str | None = Field(
+        default=None,
+        description="only when retry is yes: the narrowed query to try. Leave null otherwise — never an empty "
+                    "string or placeholder.")
+
+
+class ESecond(EVerdictBase):
+    """EFirst's schema minus retry and narrowed_query — a schema restriction, not a prompt instruction."""
+
+
+class EFirstBatch(BaseModel):
+    """One call covers both books: E's first look over the whole context, one verdict per book, none skipped."""
+    verdicts: list[EFirst] = Field(
+        description="Is exactly one entry for each book in the context, none skipped")
+
+
+class ESecondBatch(BaseModel):
+    """One call covers both books: E's retry look, one verdict per book, none skipped."""
+    verdicts: list[ESecond] = Field(
+        description="Is exactly one entry for each book in the context, none skipped")
+
+
 class CorpusFinding(BaseModel):
     corpus_id: Literal["A", "B"] = Field(
         description="the id of the book this finding is about, exactly as given in the context")
@@ -307,6 +355,33 @@ def format_answer(answer: ComposerAnswer) -> str:
     return "\n\n".join([header, body])
 
 
+# MARK: E JUDGE
+def e_judge_first(query: str, corpora: dict[str, CorpusState]) -> EFirstBatch:
+    """E's first look: one evidence-only call covering both books. It sees the query, each book's retrieved
+    chunks and its lineage — never the composer's draft — and returns the model's raw verdicts. Normalizing
+    retry/ok/narrowed_query is postprocess_e's job (44.1.2), not this one's."""
+    book_map = "\n".join(
+        f"Corpus_id: {corpus_id} = {CATALOG[corpus_id].book_title} - Era: {CATALOG[corpus_id].era}"
+        for corpus_id in corpora)
+    evidence = format_context(corpora)
+    lineage = format_attempts(corpora)
+    prompt = (
+        f"Books:\n{book_map}\n\n"
+        f"Query: {query}\n\n"
+        f"Retrieved passages per book:\n{evidence}\n\n"
+        f"Queries already tried per book:\n{lineage}\n\n"
+        "For each book listed above, judge that book's own retrieved passages alone. Work only from the "
+        "passages, and write no draft answer. First decide p_adjacent on its own terms: does some returned "
+        "chunk treat the query's theme under some proposition, whether or not it answers the query? Then decide "
+        "p_answers: does some chunk's own wording answer the query? Do not add a step the passage does not "
+        "itself state. Then give the proposition P, and, if the passages do not answer, propose retry and the "
+        "narrowed_query to try. "
+        "Add exactly one entry per book, corpus_id exactly A or B as given above."
+    )
+    judge = critique_llm.with_structured_output(EFirstBatch)
+    return judge.invoke(prompt)
+
+
 # MARK: REFLECT
 def reflect(state: ReflectionState):
     """This is an "optimizer" function that returns an evaluation to ground upstream refinement, if needed. It works by applying a Critique judgment over composer's answer."""
@@ -453,9 +528,9 @@ async def run_query(query: str) -> ReflectionState:
         "iteration": 0,
         "corpora": {
             "A": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None,
-                 "silence_cause": None},
+                  "silence_cause": None},
             "B": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None,
-                 "silence_cause": None},
+                  "silence_cause": None},
         }
     }
     return await reflection_app.ainvoke(initial_state)
@@ -514,9 +589,9 @@ if __name__ == "__main__":
             "iteration": 0,
             "corpora": {
                 "A": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None,
-                     "silence_cause": None},
+                      "silence_cause": None},
                 "B": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None,
-                     "silence_cause": None},
+                      "silence_cause": None},
             }
         }
         print(f"""________Query: {initial_state["query"]} >>>""")

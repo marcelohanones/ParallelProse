@@ -5,7 +5,8 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from ParallelProse import agent as ag
-from ParallelProse.agent import ComparisonCritique, ComposerAnswer, CorpusCritique, CorpusFinding, PerBookCritique
+from ParallelProse.agent import (ComparisonCritique, ComposerAnswer, CorpusCritique, CorpusFinding,
+                                 EFirst, EFirstBatch, ESecond, PerBookCritique)
 from ParallelProse.catalog import CATALOG
 
 
@@ -199,3 +200,48 @@ def test_reflect_keeps_silence_cause_only_on_silent(monkeypatch):
 
     assert out["corpora"]["A"]["silence_cause"] == "absence"
     assert out["corpora"]["B"]["silence_cause"] is None
+
+
+def test_e_first_field_order_is_the_bias_control():
+    assert list(EFirst.model_fields) == ["corpus_id", "p_adjacent", "p_answers", "P", "retry", "narrowed_query"]
+
+
+def test_e_second_is_e_first_minus_the_two_retry_fields():
+    assert list(ESecond.model_fields) == ["corpus_id", "p_adjacent", "p_answers", "P"]
+
+
+def test_e_judge_first_calls_critique_llm_with_evidence_only(monkeypatch):
+    verdict = EFirstBatch(verdicts=[
+        EFirst(corpus_id="A", p_adjacent="yes", p_answers="no", P="pa", retry="yes", narrowed_query="nq"),
+        EFirst(corpus_id="B", p_adjacent="no", p_answers="no", P=None, retry="no", narrowed_query=None),
+    ])
+    fake = FakeLLM({EFirstBatch: verdict})
+    monkeypatch.setattr(ag, "critique_llm", fake)
+    lineage = [{"iteration": 0, "tool": "call_parent_retriever", "args": {"query": "qa"},
+                "forced_retriever": False}]
+    corpora = {"A": corpus_slot(chunks=["a passage"], lineage=lineage),
+               "B": corpus_slot(chunks=["b passage"])}
+
+    out = ag.e_judge_first("the query", corpora)
+
+    assert out is verdict
+    prompt = fake.calls[EFirstBatch].prompts[0]
+    assert "a passage" in prompt and "b passage" in prompt
+    assert "the query" in prompt and "qa" in prompt  # query + lineage, not just chunks
+    assert "support" not in prompt
+
+
+def test_e_judge_first_never_receives_the_composer_draft(monkeypatch):
+    verdict = EFirstBatch(verdicts=[
+        EFirst(corpus_id="A", p_adjacent="no", p_answers="no", retry="no"),
+        EFirst(corpus_id="B", p_adjacent="no", p_answers="no", retry="no"),
+    ])
+    fake = FakeLLM({EFirstBatch: verdict})
+    monkeypatch.setattr(ag, "critique_llm", fake)
+    draft = "A_DRAFT_SENTENCE_THAT_MUST_NOT_LEAK"
+    state = reflection_state({"A": corpus_slot(chunks=["a"]), "B": corpus_slot(chunks=["b"])},
+                             answer=composer_answer(draft, "q", draft, "q"))
+
+    ag.e_judge_first(state["query"], state["corpora"])
+
+    assert draft not in fake.calls[EFirstBatch].prompts[0]

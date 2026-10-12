@@ -1012,8 +1012,11 @@ reads as the counter-example having been found), and on item 40, where the units
 
 ### 44. E: an evidence-only per-book verdict — the false `ok` fix
 
-**Status: not started (design closed 2026-10-11).** Build-ready spec: `docs/item41_E_spec.md` (named for the item it
-grew out of; rename pending). **What:** a dedicated per-book judge that answers two questions on the retrieved
+**Status: in progress — 44.1.1 built 2026-10-12 (design closed 2026-10-11).** Build-ready spec: `docs/item44_E_spec.md`. Decomposed into five units below, following the spec's build order; 44.1 takes the
+spec's dual-format door, so the read-site switch (44.2) lands after the schema rather than in the same commit.
+**Built as:** 44.1.1 landed (`agent.py`): `EVerdictBase` (`corpus_id`, `p_adjacent`, `p_answers`, `P`), `EFirst` (the base plus `retry`/`narrowed_query` — the field order is the bias control), `ESecond` (exactly the base, i.e. EFirst minus the two retry fields — a schema restriction, not a prompt line), the `EFirstBatch`/`ESecondBatch` per-book wrappers, and `e_judge_first(query, corpora)` — one `critique_llm` call over `format_context` (chunks) + `format_attempts` (lineage), never the composer's draft, never the word "support", returning the model's raw verdicts for `postprocess_e` (44.1.2) to normalize. **Not yet wired into the graph** (that is 44.3, option 1). 135/135 tests pass.
+
+**What:** a dedicated per-book judge that answers two questions on the retrieved
 evidence alone — `p_adjacent` first ("does some chunk treat the query's theme under some proposition?"), then
 `p_answers` ("does some chunk's own wording answer the query?") — and emits `P`, the passage's proposition (the
 answering one, or the adjacent one for a silent book), plus a retry signal derived from the two: retry only when
@@ -1021,7 +1024,39 @@ answering one, or the adjacent one for a silent book), plus a retry signal deriv
 derivation is rewritten by a post-process outside the LLM, never rejected. E runs between `retriever` and `composer`
 (option 1): composer then runs only on `ok` books, `reflect` shrinks to the comparison critique, and E's per-book
 record becomes canonical — `{label, P}` for `ok`, `{label, silence_cause, P, retry_used}` for `silent` — which the
-export, `one_sided` and the `bite_id` map read instead of composer findings.
+export, `one_sided` and the `bite_id` map read instead of composer findings. Five units, each built in order, each
+one's output the next one's input:
+
+- **44.1 E's judge, post-process, and canonical record** — the `E_first` schema (`p_adjacent`, `p_answers`, `P`,
+  `retry`, `narrowed_query`, generated in that order — the bias control) and `E_second` as the same schema minus
+  `retry`/`narrowed_query` (a schema restriction, not a prompt instruction), both on the `critique_llm` surface
+  (`PP_CRITIQUE_MODEL`/`PP_CRITIQUE_TEMPERATURE`, the judges' gpt-4o/temperature 0). The post-process is
+  deterministic, outside the LLM, applied to both looks: `retry := "no"` whenever `p_answers = "yes"`;
+  `ok := "yes"` whenever `p_answers = "yes"` and no retry fired; `narrowed_query := null` whenever `retry = "no"` —
+  rewrite, log, never reject. E sees `query + chunks + lineage`, never the composer's draft, and its prompt must not
+  use the word "support". **Ships with dual-format reads** (spec §7), so the existing consumers keep working and
+  44.2 can follow independently.
+- **44.2 The read-site switch** — `one_sided.py` reads `label == "silent"` from E's record instead of the marker
+  string; `witness_view.py` drives the per-book record from E so a silent book still produces its record with `P` as
+  the adjacent material; `theme_batches.side_is_target`, the `bite_id` map (`answer_query`), and
+  `quote_check.select_quotes`/`verify_quotes` read E's record, with a query-addressed fallback when there is no quote.
+  Drops the dual-format path.
+- **44.3 Placement and the retry loop** — `retriever → E_first → [retry?] → retriever(narrowed) → E_second →
+  composer(ok books only) → reflect(comparison critique)`. Retry fires at most once (iteration 0 only); when lineage
+  already shows a prior iteration, route straight to E_second. One call covers both books. The retry edge is global,
+  the decision per book, and a non-retrying book forwards its whole slot — the repo's standing state invariant.
+  `reflect` short-circuits when fewer than two books are `ok`. Cleanup rides along: the `PP_CRITIQUE_MODE=evidence`
+  probe, the draft-mode per-book prompt, and the dead silent-override block in `agent.py` are removed.
+- **44.4 The seed gate** — `PP_SEED` on the shared client (it cleans future draws only), then two seeded baseline runs
+  diffed per side. If the chunks differ on the failing side, the seed is not pinning and the frozen-chunk replay
+  becomes a prerequisite. E is reported against a post-seed re-baseline, never the pre-seed runs.
+- **44.5 Calibration** — all 32 labels, real calls, real graph, three outputs per side (`label`,
+  `expect_e_first_retry`, the `P` probe). Label line: 6/6 to `silent`, 0 regressions on the 26 agreeing; the triage
+  line is separate: `retry_used = true` on the six near-miss and `retry_used = false` on the agreeing "nothing to
+  search" sides; contested adjacency is its own counter. Fixtures: six bridge fixtures (g07 B, g09 B, g10 B, g11 B,
+  g13 A, g15 A), the retry pair (the Anon query and g12 A), `g16 B` as the `p_adjacent = no` guard, a
+  contested-adjacency counter, and a `P` probe. **Never starts before 44.4 is resolved.** Queued data edits land
+  here: `g13 A` `near_miss: false`, the new `g17` Anon entry, and the golden spec's count rule 16 to 17.
 
 **Why:** measured twice. The C control showed the failure is the task, not capability (three variants, zero flips;
 every reason reads "supports the finding/claim"). The A-alone probe — draft removed, question re-pointed — flipped
@@ -1030,12 +1065,6 @@ absent from the chunks, because draft-mode bridging had been masking retrieval m
 evidence-only judgment and the retry signal, with `P` keeping the adjacent material that item 40's single-voice units
 and item 39's silent witness read. **Synergy:** unblocks item 43 (a false `ok` reads as the counter-example having
 been found); feeds item 40; takes the item-37 direction for book-level checks.
-
-**Fixtures and calibration:** six bridge fixtures (g07 B, g09 B, g10 B, g11 B, g13 A, g15 A), the retry pair (the
-Anon query and g12 A), `g16 B` as the `p_adjacent = no` guard, a contested-adjacency counter, and a `P` probe. The
-calibration reads three outputs per side (label, retry expectation, `P`) against all 32 labels; the triage line
-carries both its positive and negative sides, and a seed gate — two seeded baseline runs — clears before it starts.
-Queued data edits: `g13 A` `near_miss: false`, the new `g17` Anon entry, and the golden spec's count rule 16 to 17.
 
 ### Backlog (deferred, not dropped)
 
