@@ -245,3 +245,50 @@ def test_e_judge_first_never_receives_the_composer_draft(monkeypatch):
     ag.e_judge_first(state["query"], state["corpora"])
 
     assert draft not in fake.calls[EFirstBatch].prompts[0]
+
+
+def test_postprocess_e_forces_retry_no_when_the_book_answers():
+    verdict = EFirst(corpus_id="A", p_adjacent="yes", p_answers="yes", P="pa",
+                     retry="yes", narrowed_query="nq")
+
+    out = ag.postprocess_e(verdict)
+
+    assert (out.retry, out.narrowed_query, out.ok) == ("no", None, "yes")
+    assert (out.p_adjacent, out.p_answers, out.P) == ("yes", "yes", "pa")
+
+
+def test_postprocess_e_keeps_a_retry_and_leaves_ok_undecided():
+    verdict = EFirst(corpus_id="B", p_adjacent="yes", p_answers="no", P="pa",
+                     retry="yes", narrowed_query="nq")
+
+    out = ag.postprocess_e(verdict)
+
+    assert (out.retry, out.narrowed_query, out.ok) == ("yes", "nq", None)
+
+
+def test_postprocess_e_nulls_narrowed_query_when_retry_is_no():
+    verdict = EFirst(corpus_id="B", p_adjacent="no", p_answers="no", P=None,
+                     retry="no", narrowed_query="nq")
+
+    out = ag.postprocess_e(verdict)
+
+    assert (out.retry, out.narrowed_query, out.ok) == ("no", None, "no")
+
+
+def test_postprocess_e_runs_on_e_second_which_has_no_retry_fields():
+    answered = ag.postprocess_e(ESecond(corpus_id="A", p_adjacent="yes", p_answers="yes", P="pa"))
+    silenced = ag.postprocess_e(ESecond(corpus_id="B", p_adjacent="yes", p_answers="no", P="pa"))
+
+    assert (answered.retry, answered.narrowed_query, answered.ok) == ("no", None, "yes")
+    assert (silenced.retry, silenced.narrowed_query, silenced.ok) == ("no", None, "no")
+
+
+def test_postprocess_e_logs_the_rewrite_without_rejecting(capsys):
+    verdict = EFirst(corpus_id="A", p_adjacent="yes", p_answers="yes", P="pa",
+                     retry="yes", narrowed_query="nq")
+
+    out = ag.postprocess_e(verdict)
+
+    log = capsys.readouterr().out
+    assert "rewrote" in log and "book A" in log
+    assert out.retry == "no"

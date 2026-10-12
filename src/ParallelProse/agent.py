@@ -141,6 +141,18 @@ class ESecondBatch(BaseModel):
         description="Is exactly one entry for each book in the context, none skipped")
 
 
+class EPostVerdict(BaseModel):
+    """A raw E verdict after postprocess_e: retry and narrowed_query are normalized and ok is derived.
+    ok is None only on a first look that asked for a retry — E_second then decides."""
+    corpus_id: Literal["A", "B"]
+    p_adjacent: Literal["yes", "no"]
+    p_answers: Literal["yes", "no"]
+    P: str | None
+    retry: Literal["yes", "no"]
+    narrowed_query: str | None
+    ok: Literal["yes", "no"] | None
+
+
 class CorpusFinding(BaseModel):
     corpus_id: Literal["A", "B"] = Field(
         description="the id of the book this finding is about, exactly as given in the context")
@@ -380,6 +392,29 @@ def e_judge_first(query: str, corpora: dict[str, CorpusState]) -> EFirstBatch:
     )
     judge = critique_llm.with_structured_output(EFirstBatch)
     return judge.invoke(prompt)
+
+
+def postprocess_e(verdict: EVerdictBase) -> EPostVerdict:
+    """Deterministic, outside the LLM, applied to both looks. It rewrites — never rejects — the model's
+    proposal so the derivation table holds: retry is forced no when p_answers is yes; narrowed_query is null
+    whenever retry is no; ok is yes when p_answers is yes, no when the book does not answer and no retry fired,
+    and None when a retry must decide. E_second has no retry/narrowed_query fields, so it reads as 'no'/None."""
+    raw_retry = getattr(verdict, "retry", "no")
+    raw_narrowed = getattr(verdict, "narrowed_query", None)
+    retry = "no" if verdict.p_answers == "yes" else ("yes" if raw_retry == "yes" else "no")
+    narrowed_query = raw_narrowed if retry == "yes" else None
+    if verdict.p_answers == "yes":
+        ok = "yes"
+    elif retry == "yes":
+        ok = None
+    else:
+        ok = "no"
+    if (raw_retry, raw_narrowed) != (retry, narrowed_query):
+        print(f"E post-process (book {verdict.corpus_id}): rewrote retry={raw_retry!r} "
+              f"narrowed_query={raw_narrowed!r} -> retry={retry!r} narrowed_query={narrowed_query!r}")
+    return EPostVerdict(corpus_id=verdict.corpus_id, p_adjacent=verdict.p_adjacent,
+                        p_answers=verdict.p_answers, P=verdict.P, retry=retry,
+                        narrowed_query=narrowed_query, ok=ok)
 
 
 # MARK: REFLECT
