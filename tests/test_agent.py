@@ -6,13 +6,14 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from ParallelProse import agent as ag
 from ParallelProse.agent import (ComparisonCritique, ComposerAnswer, CorpusCritique, CorpusFinding,
-                                 EFirst, EFirstBatch, ESecond, PerBookCritique)
+                                 EFirst, EFirstBatch, EPostVerdict, ESecond, PerBookCritique)
 from ParallelProse.catalog import CATALOG
 
 
-def corpus_slot(label=None, chunks=None, lineage=None, reason=None, narrowed_query=None, silence_cause=None):
+def corpus_slot(label=None, chunks=None, lineage=None, reason=None, narrowed_query=None, silence_cause=None,
+                P=None, retry_used=False):
     return {"chunks": chunks, "lineage": lineage or [], "label": label, "reason": reason,
-            "narrowed_query": narrowed_query, "silence_cause": silence_cause}
+            "narrowed_query": narrowed_query, "silence_cause": silence_cause, "P": P, "retry_used": retry_used}
 
 
 def reflection_state(corpora, answer="", iteration=1, needs_revision=False):
@@ -90,9 +91,9 @@ def test_retriever_forwards_skipped_slots_unchanged(monkeypatch):
     out = asyncio.run(ag.retriever(state))
 
     assert out["corpora"]["A"] == {"chunks": ["a1"], "lineage": lineage, "label": "ok", "reason": "ra",
-                                   "narrowed_query": None, "silence_cause": None}
+                                   "narrowed_query": None, "silence_cause": None, "P": None, "retry_used": False}
     assert out["corpora"]["B"] == {"chunks": ["b1"], "lineage": [], "label": "silent", "reason": "rb",
-                                   "narrowed_query": None, "silence_cause": None}
+                                   "narrowed_query": None, "silence_cause": None, "P": None, "retry_used": False}
 
 
 def test_retriever_retries_a_miss_with_its_narrowed_query(monkeypatch):
@@ -160,11 +161,11 @@ def test_composer_with_both_books_silent(monkeypatch):
     assert [f.claim_in_passage for f in out["answer"].unique_findings] == ["query content is absent"] * 2
 
 
-def test_reflect_returns_every_book_with_narrowed_query_only_on_miss(monkeypatch):
+def test_reflect_builds_the_e_record_and_keeps_a_retry_as_miss(monkeypatch):
     fake = FakeLLM({
-        PerBookCritique: PerBookCritique(corpora_critique=[
-            CorpusCritique(corpus_id="A", label="miss", reason="ra", narrowed_query="na"),
-            CorpusCritique(corpus_id="B", label="ok", reason="rb", narrowed_query="nb"),
+        EFirstBatch: EFirstBatch(verdicts=[
+            EFirst(corpus_id="A", p_adjacent="yes", p_answers="no", P="pa", retry="yes", narrowed_query="na"),
+            EFirst(corpus_id="B", p_adjacent="yes", p_answers="yes", P="pb", retry="yes", narrowed_query="nb"),
         ]),
         ComparisonCritique: ComparisonCritique(needs_revision=True, feedback="fb"),
     })
@@ -175,31 +176,44 @@ def test_reflect_returns_every_book_with_narrowed_query_only_on_miss(monkeypatch
 
     out = ag.reflect(state)
 
-    assert out["needs_revision"] is True
-    assert out["feedback"] == "fb"
-    assert out["corpora"]["A"] == {"chunks": ["a"], "lineage": [], "label": "miss", "reason": "ra",
-                                   "narrowed_query": "na", "silence_cause": None}
-    assert out["corpora"]["B"] == {"chunks": ["b"], "lineage": [], "label": "ok", "reason": "rb",
-                                   "narrowed_query": None, "silence_cause": None}
+    assert out["needs_revision"] is True and out["feedback"] == "fb"
+    assert out["corpora"]["A"] == {"chunks": ["a"], "lineage": [], "label": "miss",
+                                   "reason": "p_answers=no, p_adjacent=yes", "narrowed_query": "na",
+                                   "silence_cause": None, "P": "pa", "retry_used": False}
+    assert out["corpora"]["B"] == {"chunks": ["b"], "lineage": [], "label": "ok",
+                                   "reason": "p_answers=yes, p_adjacent=yes", "narrowed_query": None,
+                                   "silence_cause": None, "P": "pb", "retry_used": False}
 
 
-def test_reflect_keeps_silence_cause_only_on_silent(monkeypatch):
+def test_reflect_derives_silence_cause_and_retry_used_from_the_record_fields(monkeypatch):
     fake = FakeLLM({
-        PerBookCritique: PerBookCritique(corpora_critique=[
-            CorpusCritique(corpus_id="A", label="silent", reason="ra", silence_cause="absence"),
-            CorpusCritique(corpus_id="B", label="ok", reason="rb", silence_cause="adjacent_topic"),
+        EFirstBatch: EFirstBatch(verdicts=[
+            EFirst(corpus_id="A", p_adjacent="no", p_answers="no", P=None, retry="no"),
+            EFirst(corpus_id="B", p_adjacent="yes", p_answers="no", P="pb", retry="no"),
         ]),
         ComparisonCritique: ComparisonCritique(needs_revision=False, feedback="fb"),
     })
     monkeypatch.setattr(ag, "llm", fake)
     monkeypatch.setattr(ag, "critique_llm", fake)
-    state = reflection_state({"A": corpus_slot(chunks=["a"]), "B": corpus_slot(chunks=["b"])},
+    state = reflection_state({"A": corpus_slot("miss", chunks=["a"]), "B": corpus_slot(chunks=["b"])},
                              answer=composer_answer("fa", "qa", "fb", "qb"))
 
     out = ag.reflect(state)
 
-    assert out["corpora"]["A"]["silence_cause"] == "absence"
-    assert out["corpora"]["B"]["silence_cause"] is None
+    assert (out["corpora"]["A"]["label"], out["corpora"]["A"]["silence_cause"],
+            out["corpora"]["A"]["retry_used"]) == ("silent", "absence", True)
+    assert (out["corpora"]["B"]["label"], out["corpora"]["B"]["silence_cause"],
+            out["corpora"]["B"]["retry_used"]) == ("silent", "adjacent_topic", False)
+
+
+def test_e_record_maps_ok_miss_and_silent():
+    ok = EPostVerdict(corpus_id="A", p_adjacent="yes", p_answers="yes", P="p", retry="no", narrowed_query=None, ok="yes")
+    miss = EPostVerdict(corpus_id="A", p_adjacent="yes", p_answers="no", P="p", retry="yes", narrowed_query="n", ok=None)
+    silent = EPostVerdict(corpus_id="A", p_adjacent="no", p_answers="no", P=None, retry="no", narrowed_query=None, ok="no")
+
+    assert ag.e_record(ok, False) == {"label": "ok", "silence_cause": None, "P": "p", "retry_used": False}
+    assert ag.e_record(miss, False)["label"] == "miss"
+    assert ag.e_record(silent, True) == {"label": "silent", "silence_cause": "absence", "P": None, "retry_used": True}
 
 
 def test_e_first_field_order_is_the_bias_control():

@@ -179,7 +179,7 @@ def test_run_theme_batches_builds_the_session_tree(tmp_path, monkeypatch):
     assert first_thesis["bites"][0]["code"] == "1.1a"
     assert first_thesis["bites"][0]["verified"] == {"A": True, "B": True}
     assert first_thesis["bites"][0]["retrieval"]["A"] == {"label": "ok", "reason": "fine", "lineage": [],
-                                                           "silence_cause": None}
+                                                           "silence_cause": None, "P": None, "retry_used": False}
     assert set(first_thesis["bites"][0]["bite_id"]) == {"A", "B"}
     assert first_thesis["bites"][0]["bite_id"]["A"] != first_thesis["bites"][0]["bite_id"]["B"]
 

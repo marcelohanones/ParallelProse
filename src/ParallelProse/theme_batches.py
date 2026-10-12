@@ -113,7 +113,8 @@ def retrieval_diagnostics(corpora: dict, side_target: dict[str, bool | None]) ->
     answer must not crash this — it just means the twin fact is unknown, not that the book is a non-target."""
     return {cid: {"label": slot["label"], "reason": slot["reason"], "lineage": slot["lineage"],
                  "silence_cause": resolve_silence_cause(slot["label"], slot["silence_cause"],
-                                                        side_target.get(cid))}
+                                                        side_target.get(cid)),
+                 "P": slot.get("P"), "retry_used": slot.get("retry_used", False)}
             for cid, slot in corpora.items()}
 
 

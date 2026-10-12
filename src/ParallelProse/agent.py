@@ -49,6 +49,8 @@ class CorpusState(TypedDict):
     reason: str | None
     narrowed_query: str | None
     silence_cause: Literal["adjacent_topic", "absence"] | None
+    P: str | None
+    retry_used: bool
 
 
 class ReflectionState(TypedDict):
@@ -215,6 +217,8 @@ async def retriever(state: ReflectionState):
                 "reason": state["corpora"][corpus_id]["reason"],
                 "narrowed_query": None,
                 "silence_cause": state["corpora"][corpus_id]["silence_cause"],
+                "P": state["corpora"][corpus_id]["P"],
+                "retry_used": state["corpora"][corpus_id]["retry_used"],
             }
             continue
         result = await retrieval_agent.ainvoke(
@@ -262,6 +266,8 @@ async def retriever(state: ReflectionState):
             "label": state["corpora"][corpus_id]["label"],
             "reason": state["corpora"][corpus_id]["reason"],
             "silence_cause": state["corpora"][corpus_id]["silence_cause"],
+            "P": state["corpora"][corpus_id]["P"],
+            "retry_used": state["corpora"][corpus_id]["retry_used"],
         }
     return {"corpora": corpora_updates}
 
@@ -417,49 +423,32 @@ def postprocess_e(verdict: EVerdictBase) -> EPostVerdict:
                         narrowed_query=narrowed_query, ok=ok)
 
 
+def e_record(verdict: EPostVerdict, retry_used: bool) -> dict:
+    """The canonical per-book record E owns: label plus P, and — for a silent book — silence_cause (derived
+    from p_adjacent) and retry_used. A first look that asked for a retry maps to 'miss' so the existing router
+    runs it; 44.3 replaces that with the E_second look, after which every record ends ok or silent."""
+    if verdict.ok == "yes":
+        label = "ok"
+    elif verdict.ok is None:
+        label = "miss"
+    else:
+        label = "silent"
+    silence_cause = None
+    if label == "silent":
+        silence_cause = "adjacent_topic" if verdict.p_adjacent == "yes" else "absence"
+    return {"label": label, "silence_cause": silence_cause, "P": verdict.P, "retry_used": retry_used}
+
+
 # MARK: REFLECT
 def reflect(state: ReflectionState):
-    """This is an "optimizer" function that returns an evaluation to ground upstream refinement, if needed. It works by applying a Critique judgment over composer's answer."""
+    """The graph's per-book judge and cross-book critic. The per-book half is now E's evidence-only look
+    (item 44.1.3): e_judge_first sees the query, each book's chunks and its lineage — never the composer's
+    draft — and postprocess_e + e_record turn that verdict into the canonical record. The comparison half
+    still critiques agreement/disagreement as a whole."""
 
-    # 1 - This section gets the data for the per-book call..
-    book_map = "\n".join(
-        f"Corpus_id: {corpus_id} = {CATALOG[corpus_id].book_title} - Era: {CATALOG[corpus_id].era}" for corpus_id in
-        state["corpora"])
-    attempts = format_attempts(state["corpora"])
-    chunks = format_context(state["corpora"])
-    answer = format_answer(state['answer'])
-    # 2 - This section does a per-book call.
-    per_book_llm = critique_llm.with_structured_output(PerBookCritique)
-    if CRITIQUE_MODE == "evidence":
-        per_book_prompt = (
-            f"Books:\n{book_map}\n\n"
-            f"Query: {state['query']}\n\n"
-            f"Retrieved passages per book:\n{chunks}\n\n"
-            f"Queries already tried per book:\n{attempts}\n\n"
-            "For each book listed above, judge whether that book's own retrieved passages answer the "
-            "query. Work only from the passages: do not write a draft answer, and do not connect a "
-            "passage to the query by a step the passage does not itself state.\n"
-            "Then, for each book listed above, add one entry to corpora_critique: corpus_id must be "
-            "exactly A or B as given above, plus label, reason, and narrowed_query."
-        )
-    else:
-        per_book_prompt = (
-            f"Books:\n{book_map}\n\n"
-            f"Query: {state['query']}\n\n"
-            f"Answer:\n{answer}\n\n"
-            f"Retrieved passages per book:\n{chunks}\n\n"
-            f"Queries already tried per book:\n{attempts}\n\n"
-            "Critique the answer for factual accuracy against the retrieved passages, and for completeness "
-            "relative to what the query itself asks — not for exhaustiveness relative to the passages. A "
-            "passage almost always contains more than the query asks about; do not flag the answer for "
-            "leaving out something the query does not ask about.\n"
-            "Each finding already includes its own verbatim quote in parentheses — do not treat that as "
-            "missing evidence or ask for quotes to be added or integrated; judge factual accuracy and "
-            "completeness only.\n"
-            "Then, for each book listed above, add one entry to corpora_critique: corpus_id must be "
-            "exactly A or B as given above, plus label, reason, and narrowed_query."
-        )
-    per_book = per_book_llm.invoke(per_book_prompt)
+    # 1 - E's evidence-only look (item 44.1.3) replaces the draft-support per-book critique. One call
+    # covers both books; the post-process below makes its verdicts deterministic before they become the record.
+    first = e_judge_first(state["query"], state["corpora"])
     # 2 - comparison call: restricted inputs, new schema
     comparison_prompt = f"Query: {state['query']}\n" \
                         f"Agreement: {state['answer'].agreement}\n" \
@@ -468,49 +457,29 @@ def reflect(state: ReflectionState):
     comparison_llm = llm.with_structured_output(ComparisonCritique)
     comparison = comparison_llm.invoke(comparison_prompt)
 
-    # X - This section saves the Critique in a per-book structure.
-    verdicts = {}
-    for slot in per_book.corpora_critique:
-        if slot.label != "miss":
-            slot.narrowed_query = None
-        if slot.label != "silent":
-            slot.silence_cause = None
-        if slot.corpus_id == "A":
-            verdicts["A"] = {"corpus_id": slot.corpus_id,
-                             "label": slot.label,
-                             "reason": slot.reason,
-                             "narrowed_query": slot.narrowed_query,
-                             "silence_cause": slot.silence_cause,
-                             }
-        else:
-            verdicts["B"] = {"corpus_id": slot.corpus_id,
-                             "label": slot.label,
-                             "reason": slot.reason,
-                             "narrowed_query": slot.narrowed_query,
-                             "silence_cause": slot.silence_cause,
-                             }
+    # 3 - Deterministic post-process + the canonical per-book record. Dual format: the composer-derived
+    # fields the existing consumers read stay alongside E's, until 44.2 switches the read sites.
+    verdicts = {verdict.corpus_id: postprocess_e(verdict) for verdict in first.verdicts}
+    corpora = {}
+    for corpus_id in state["corpora"]:
+        verdict = verdicts[corpus_id]
+        retry_used = state["corpora"][corpus_id]["label"] == "miss"
+        record = e_record(verdict, retry_used)
+        corpora[corpus_id] = {
+            "chunks": state["corpora"][corpus_id]["chunks"],
+            "lineage": state["corpora"][corpus_id]["lineage"],
+            "label": record["label"],
+            "reason": f"p_answers={verdict.p_answers}, p_adjacent={verdict.p_adjacent}",
+            "narrowed_query": verdict.narrowed_query,
+            "silence_cause": record["silence_cause"],
+            "P": record["P"],
+            "retry_used": record["retry_used"],
+        }
 
     return {
         "feedback": comparison.feedback,
         "needs_revision": comparison.needs_revision,
-        "corpora":
-            {"A": {
-                "chunks": state["corpora"]["A"]["chunks"],
-                "lineage": state["corpora"]["A"]["lineage"],
-                "label": verdicts["A"]["label"],
-                "reason": verdicts["A"]["reason"],
-                "narrowed_query": verdicts["A"]["narrowed_query"],
-                "silence_cause": verdicts["A"]["silence_cause"],
-            },
-                "B": {
-                    "chunks": state["corpora"]["B"]["chunks"],
-                    "lineage": state["corpora"]["B"]["lineage"],
-                    "label": verdicts["B"]["label"],
-                    "reason": verdicts["B"]["reason"],
-                    "narrowed_query": verdicts["B"]["narrowed_query"],
-                    "silence_cause": verdicts["B"]["silence_cause"],
-                }
-            }
+        "corpora": corpora,
     }
 
 
@@ -563,9 +532,9 @@ async def run_query(query: str) -> ReflectionState:
         "iteration": 0,
         "corpora": {
             "A": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None,
-                  "silence_cause": None},
+                  "silence_cause": None, "P": None, "retry_used": False},
             "B": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None,
-                  "silence_cause": None},
+                  "silence_cause": None, "P": None, "retry_used": False},
         }
     }
     return await reflection_app.ainvoke(initial_state)
@@ -624,9 +593,9 @@ if __name__ == "__main__":
             "iteration": 0,
             "corpora": {
                 "A": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None,
-                      "silence_cause": None},
+                      "silence_cause": None, "P": None, "retry_used": False},
                 "B": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None,
-                      "silence_cause": None},
+                      "silence_cause": None, "P": None, "retry_used": False},
             }
         }
         print(f"""________Query: {initial_state["query"]} >>>""")
