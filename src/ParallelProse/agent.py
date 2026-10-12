@@ -18,19 +18,18 @@ from ParallelProse.mcp_tools import PORT, http_client, mcp, mcp_tools_as_langcha
 warnings.filterwarnings("ignore")
 load_dotenv()
 
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
+# Item 44.4's seed gate: PP_SEED pins the sampling draws on the shared client surface (the retrieval agent
+# and the composer). It cleans future draws only — chunks already retrieved are unaffected.
+SEED = os.getenv("PP_SEED")
+SEED_KWARGS = {"seed": int(SEED)} if SEED else {}
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5, **SEED_KWARGS)
 
 # The per-book verdict is a factual judgment, not prose, so it gets its own client: its temperature and model can be
 # set independently of the composer's. The env overrides exist for item 41's C control (temperature 0 / gpt-4o on
 # this call only); the defaults reproduce the behaviour before the control.
 CRITIQUE_MODEL = os.getenv("PP_CRITIQUE_MODEL", "gpt-4o-mini")
 CRITIQUE_TEMPERATURE = float(os.getenv("PP_CRITIQUE_TEMPERATURE", "0.5"))
-critique_llm = ChatOpenAI(model=CRITIQUE_MODEL, temperature=CRITIQUE_TEMPERATURE)
-
-# Item 41's A probe: with PP_CRITIQUE_MODE=evidence the per-book call judges the passages alone — the draft is
-# removed from its input and its question is re-pointed at the book. The default ("draft") is the behaviour
-# before the probe.
-CRITIQUE_MODE = os.getenv("PP_CRITIQUE_MODE", "draft")
+critique_llm = ChatOpenAI(model=CRITIQUE_MODEL, temperature=CRITIQUE_TEMPERATURE, **SEED_KWARGS)
 
 MAX_ITERATIONS = 5
 MAX_TOOL_CALLS = 4
@@ -62,24 +61,6 @@ class ReflectionState(TypedDict):
     corpora: dict[str, CorpusState]  # {"A": {...}} for now
 
 
-class CorpusCritique(BaseModel):
-    """One book's verdict: is the evidence there, and if not, why."""
-    corpus_id: Literal["A", "B"] = Field(
-        description="the id of the book this verdict is about, exactly as given in the context")
-    label: Literal["ok", "miss", "silent"] = Field(
-        description="'ok' means a chunk's own sentence already asserts the query's specific claim — not a theme you connect to it by your own reasoning. Before choosing 'ok', test it: does the chunk's own wording state this claim, or did you add a step (e.g. 'this passage is about X, and X could explain the query's Y') to bridge from what the chunk says to what the query asks? Any such added step disqualifies 'ok' — it means you are inferring the answer, not finding it. 'miss' is when the book probably addresses it in different words, worth a narrowed retry. 'silent' is when the chunks, read literally with no bridging inference, don't make this claim — whether unrelated, or merely adjacent (same general topic, different specific point, bridged only by your own inference). A narrowed retry that still comes back empty is the best evidence of silence. So, on the first look the default leans toward miss, and silent needs the evidence to stack up.")
-    reason: str = Field(
-        description="First state plainly whether the chunk's own words already assert the claim, or whether you had to add a connecting inference the chunk doesn't itself state — naming that inference if so (this signals the label should not be 'ok'). Then point to the fact(s) that back up the label: a chunk fully covers the query, or not; if not, whether a narrowed_query has already been tried, successfully or not.")
-    narrowed_query: str | None = Field(
-        default=None,
-        description="Only used when label is 'miss'. It is a narrowed query that would resolve a specific factual doubt, if any. Leave null otherwise.",
-    )
-    silence_cause: Literal["adjacent_topic", "absence"] | None = Field(
-        default=None,
-        description="Only used when label is 'silent'. 'adjacent_topic' when the chunks show related material that doesn't make this specific claim (a near miss). 'absence' when nothing related was found at all. Leave null otherwise.",
-    )
-
-
 class ComparisonCritique(BaseModel):
     """The cross-book comparison verdict only — no per-book entries, no passages: judges the agreement/disagreement as a whole."""
     needs_revision: bool = Field(
@@ -87,12 +68,6 @@ class ComparisonCritique(BaseModel):
     )
     feedback: str = Field(
         description="Judge from the query and from answer's 'agreement' and 'disagreement' text alone. Make no mention of passages, quotes, or per-book findings.")
-
-
-class PerBookCritique(BaseModel):
-    """Holds one verdict per book — label, reason, narrowed_query — none skipped. No draft-level signal here."""
-    corpora_critique: list[CorpusCritique] = Field(
-        description="Is exactly one entry for each book in the context, none skipped")
 
 
 # MARK: E (item 44) — the evidence-only per-book verdict
@@ -173,7 +148,8 @@ class ComposerAnswer(BaseModel):
         description="Agreement means what both books actually claim in common about the query. A substantive point they both assert — not just a subject both happen to touch on. ")
     disagreement: str = Field(
         description="It's a point where the books' claims conflict, both books make a claim about the same specific point, and the claims contradict. It`s not just a point where their subjects diverge, both books touch the same broad subject but make claims about different facets of it — nothing actually contradicts, because there's no shared point to compare.")
-    unique_findings: list[CorpusFinding] = Field(description="one entry per book, none skipped")
+    unique_findings: list[CorpusFinding] = Field(
+        description="one entry per book that addresses the query (label 'ok'); a book the graph marked 'silent' gets no finding here.")
 
 
 _server_task: asyncio.Task | None = None  # guard to void re-calling
@@ -289,61 +265,30 @@ def format_context(corpora: dict[str, CorpusState]) -> str:
 
 # MARK: COMPOSER
 def composer(state: ReflectionState):
-    """
-    This function composes an answer on how chunks answers the query.
-    """
-
-    book_map = "\n".join(
-        f"""Corpus_id: {corpus_id} = {CATALOG[corpus_id].book_title}, Label: {state["corpora"][corpus_id]["label"]}, Era: {CATALOG[corpus_id].era}"""
-        for
-        corpus_id in state["corpora"])
+    """Composes the answer from the books E left 'ok'. A silent book contributes no finding — the readers
+    take their per-book record from E, not from here — and when fewer than two books answer, the
+    agreement/disagreement is written deterministically instead of by the model."""
+    ok = [corpus_id for corpus_id in state["corpora"] if state["corpora"][corpus_id]["label"] == "ok"]
     context = format_context(state["corpora"])  # organize chunks per-book
 
-    # an "ok" book was skipped by retriever this round: same chunks, so its finding is settled.
-    kept = {}
-    if state["answer"]:
-        for slot in state["answer"].unique_findings:
-            if state["corpora"][slot.corpus_id]["label"] == "ok":
-                kept[slot.corpus_id] = slot
-
-    if state["needs_revision"]:
-        prompt = f"Given this context {context}, the query {state['query']}, the previous answer{state['answer']}, the book mapping {book_map}, critique to address this feedback {state['feedback']}"
+    if not ok:
+        answer = ComposerAnswer(agreement="Neither book addresses the query.",
+                                disagreement="None.", unique_findings=[])
     else:
-        prompt = f"Given this context {context}, write a short (3-4 sentence) factual note on: {state['query']}"
-    if kept:
-        kept_text = "\n".join(
-            f'Corpus_id: {corpus_id} = Finding: {slot.claim_in_passage} (quote: "{slot.quote}")'
-            for corpus_id, slot in kept.items())
-        fresh = [corpus_id for corpus_id in state["corpora"] if corpus_id not in kept]
-        prompt += (f"\n\nunique_findings must still hold exactly one entry per book: {', '.join(state['corpora'])}. "
-                   f"Write a fresh finding for: {', '.join(fresh)}. "
-                   f"These books' findings are already settled — reuse them verbatim, and write "
-                   f"agreement/disagreement consistent with them:\n{kept_text}")
-    silent = [corpus_id for corpus_id in state["corpora"] if state["corpora"][corpus_id]["label"] == "silent"]
+        book_map = "\n".join(
+            f"""Corpus_id: {corpus_id} = {CATALOG[corpus_id].book_title}, Label: {state["corpora"][corpus_id]["label"]}, Era: {CATALOG[corpus_id].era}"""
+            for corpus_id in state["corpora"])
+        prompt = (f"Given this context {context}, the query {state['query']} and the book mapping {book_map}, "
+                  f"write a short (3-4 sentence) factual note on: {state['query']}")
+        answer = llm.with_structured_output(ComposerAnswer).invoke(prompt)
+        # a finding only exists for a book that answers: drop any the model wrote for a silent book
+        answer.unique_findings = [slot for slot in answer.unique_findings if slot.corpus_id in ok]
+        if len(ok) == 1:
+            silent_names = ", ".join(CATALOG[c].book_title for c in state["corpora"] if c not in ok)
+            answer.agreement = f"{silent_names} does not address the query, so there is no cross-book agreement."
+            answer.disagreement = "None: only one book addresses the query."
 
-    llm_call = llm.with_structured_output(ComposerAnswer)
-    structured_answer = llm_call.invoke(prompt)
-    for slot in structured_answer.unique_findings:
-        if slot.corpus_id in kept:
-            slot.claim_in_passage = kept[slot.corpus_id].claim_in_passage
-            slot.quote = kept[slot.corpus_id].quote
-            slot.form = kept[slot.corpus_id].form
-    for corpus_id in state["corpora"]:
-        if state["corpora"][corpus_id]["label"] == "silent":
-            for slot in structured_answer.unique_findings:
-                if slot.corpus_id == corpus_id:
-                    slot.claim_in_passage = "query content is absent"
-                    slot.quote = None
-                    slot.form = None
-    if len(silent) == len(state["corpora"]):
-        structured_answer.agreement = "Neither book addresses the query."
-        structured_answer.disagreement = "None."
-    elif silent:
-        names = ", ".join(CATALOG[c].book_title for c in silent)
-        structured_answer.agreement = f"{names} does not address the query, so there is no cross-book agreement."
-        structured_answer.disagreement = "None: only one book addresses the query."
-
-    return {"answer": structured_answer, "iteration": state["iteration"] + 1}
+    return {"answer": answer, "iteration": state["iteration"] + 1}
 
 
 def format_attempts(corpora: dict[str, CorpusState]) -> str:
@@ -400,6 +345,33 @@ def e_judge_first(query: str, corpora: dict[str, CorpusState]) -> EFirstBatch:
     return judge.invoke(prompt)
 
 
+# MARK: E SECOND JUDGE
+def e_judge_second(query: str, corpora: dict[str, CorpusState]) -> ESecondBatch:
+    """E's retry look: the same evidence-only judgment as e_judge_first, restricted to ESecond's schema —
+    no retry, no narrowed_query. After a retry round every record must end ok or silent, so this look
+    cannot propose another one. The same rule holds: the composer's draft is never in the prompt, and
+    the prompt never says "support"."""
+    book_map = "\n".join(
+        f"Corpus_id: {corpus_id} = {CATALOG[corpus_id].book_title} - Era: {CATALOG[corpus_id].era}"
+        for corpus_id in corpora)
+    evidence = format_context(corpora)
+    lineage = format_attempts(corpora)
+    prompt = (
+        f"Books:\n{book_map}\n\n"
+        f"Query: {query}\n\n"
+        f"Retrieved passages per book:\n{evidence}\n\n"
+        f"Queries already tried per book:\n{lineage}\n\n"
+        "For each book listed above, judge that book's own retrieved passages alone. Work only from the "
+        "passages, and write no draft answer. First decide p_adjacent on its own terms: does some returned "
+        "chunk treat the query's theme under some proposition, whether or not it answers the query? Then decide "
+        "p_answers: does some chunk's own wording answer the query? Do not add a step the passage does not "
+        "itself state. Then give the proposition P. "
+        "Add exactly one entry per book, corpus_id exactly A or B as given above."
+    )
+    judge = critique_llm.with_structured_output(ESecondBatch)
+    return judge.invoke(prompt)
+
+
 def postprocess_e(verdict: EVerdictBase) -> EPostVerdict:
     """Deterministic, outside the LLM, applied to both looks. It rewrites — never rejects — the model's
     proposal so the derivation table holds: retry is forced no when p_answers is yes; narrowed_query is null
@@ -426,7 +398,7 @@ def postprocess_e(verdict: EVerdictBase) -> EPostVerdict:
 def e_record(verdict: EPostVerdict, retry_used: bool) -> dict:
     """The canonical per-book record E owns: label plus P, and — for a silent book — silence_cause (derived
     from p_adjacent) and retry_used. A first look that asked for a retry maps to 'miss' so the existing router
-    runs it; 44.3 replaces that with the E_second look, after which every record ends ok or silent."""
+    runs it, and the E_second look later overwrites it — so every record the graph ends on is ok or silent."""
     if verdict.ok == "yes":
         label = "ok"
     elif verdict.ok is None:
@@ -439,13 +411,12 @@ def e_record(verdict: EPostVerdict, retry_used: bool) -> dict:
     return {"label": label, "silence_cause": silence_cause, "P": verdict.P, "retry_used": retry_used}
 
 
-# MARK: E FIRST (item 44.3)
-def e_first(state: ReflectionState) -> dict:
-    """E's first look as its own graph node: one evidence-only call over both books — query, chunks
-    and lineage, never the composer's draft — then postprocess_e and e_record turn each raw verdict
-    into the canonical per-book record. The comparison critique stays out of this node."""
-    first = e_judge_first(state["query"], state["corpora"])
-    verdicts = {verdict.corpus_id: postprocess_e(verdict) for verdict in first.verdicts}
+# MARK: E FIRST / SECOND NODES (item 44.3)
+def _e_records(state: ReflectionState, raw_verdicts) -> dict:
+    """The deterministic tail both E looks share: postprocess_e every raw verdict, then e_record turns
+    each one into the canonical per-book slot. Every book in state["corpora"] gets a slot — the state
+    invariant: returning corpora replaces the whole dict, so an omitted book is a deleted book."""
+    verdicts = {verdict.corpus_id: postprocess_e(verdict) for verdict in raw_verdicts}
     corpora = {}
     for corpus_id in state["corpora"]:
         verdict = verdicts[corpus_id]
@@ -461,70 +432,41 @@ def e_first(state: ReflectionState) -> dict:
             "P": record["P"],
             "retry_used": record["retry_used"],
         }
-    return {"corpora": corpora}
+    return corpora
+
+
+def e_first(state: ReflectionState) -> dict:
+    """E's first look as its own graph node: one evidence-only call over both books — query, chunks
+    and lineage, never the composer's draft — then the deterministic tail turns each raw verdict into
+    the canonical per-book record. The comparison critique stays out of this node."""
+    first = e_judge_first(state["query"], state["corpora"])
+    return {"corpora": _e_records(state, first.verdicts)}
+
+
+def e_second(state: ReflectionState) -> dict:
+    """E's retry look: the same evidence-only judgment as e_first, but ESecond's schema carries no retry
+    or narrowed_query, so this look only decides ok or silent. Every record is final after this node, and
+    retry_used is true on a book whose prior look was 'miss'."""
+    second = e_judge_second(state["query"], state["corpora"])
+    return {"corpora": _e_records(state, second.verdicts)}
 
 
 # MARK: REFLECT
 def reflect(state: ReflectionState):
-    """The graph's per-book judge and cross-book critic. The per-book half is now E's evidence-only look
-    (item 44.1.3): e_judge_first sees the query, each book's chunks and its lineage — never the composer's
-    draft — and postprocess_e + e_record turn that verdict into the canonical record. The comparison half
-    still critiques agreement/disagreement as a whole."""
+    """The cross-book comparison critique. The per-book verdict now lives in e_first/e_second, so this
+    node judges agreement/disagreement as a whole and short-circuits when fewer than two books are 'ok'
+    — there is no comparison to judge then."""
+    ok = [corpus_id for corpus_id in state["corpora"] if state["corpora"][corpus_id]["label"] == "ok"]
+    if len(ok) < 2:
+        return {"feedback": "Comparison skipped: fewer than two books answer the query.",
+                "needs_revision": False}
 
-    # 1 - E's evidence-only look (item 44.1.3) replaces the draft-support per-book critique. One call
-    # covers both books; the post-process below makes its verdicts deterministic before they become the record.
-    first = e_judge_first(state["query"], state["corpora"])
-    # 2 - comparison call: restricted inputs, new schema
-    comparison_prompt = f"Query: {state['query']}\n" \
-                        f"Agreement: {state['answer'].agreement}\n" \
-                        f"Disagreement: {state['answer'].disagreement}\n" \
-                        "<instruction: judge the comparison as a whole; you have no access to per-book chunks or findings, so you cannot and must not reference one book's depth specifically>"
-    comparison_llm = llm.with_structured_output(ComparisonCritique)
-    comparison = comparison_llm.invoke(comparison_prompt)
-
-    # 3 - Deterministic post-process + the canonical per-book record. Dual format: the composer-derived
-    # fields the existing consumers read stay alongside E's, until 44.2 switches the read sites.
-    verdicts = {verdict.corpus_id: postprocess_e(verdict) for verdict in first.verdicts}
-    corpora = {}
-    for corpus_id in state["corpora"]:
-        verdict = verdicts[corpus_id]
-        retry_used = state["corpora"][corpus_id]["label"] == "miss"
-        record = e_record(verdict, retry_used)
-        corpora[corpus_id] = {
-            "chunks": state["corpora"][corpus_id]["chunks"],
-            "lineage": state["corpora"][corpus_id]["lineage"],
-            "label": record["label"],
-            "reason": f"p_answers={verdict.p_answers}, p_adjacent={verdict.p_adjacent}",
-            "narrowed_query": verdict.narrowed_query,
-            "silence_cause": record["silence_cause"],
-            "P": record["P"],
-            "retry_used": record["retry_used"],
-        }
-
-    return {
-        "feedback": comparison.feedback,
-        "needs_revision": comparison.needs_revision,
-        "corpora": corpora,
-    }
-
-
-def route_after_reflection(state: ReflectionState):
-    """This function routes the flow"""
-    has_miss = False
-    has_silent = False
-    for corpus_id in state["corpora"]:
-        if state["corpora"][corpus_id]["label"] == "miss":
-            has_miss = True
-        if state["corpora"][corpus_id]["label"] == "silent":
-            has_silent = True
-
-    if has_miss and state["iteration"] < MAX_ITERATIONS:
-        return "retriever"
-    elif has_silent:
-        return "finalize"
-    elif has_miss:
-        print("END - MAX_ITERATIONS reached")
-    return END
+    comparison_prompt = (f"Query: {state['query']}\n"
+                         f"Agreement: {state['answer'].agreement}\n"
+                         f"Disagreement: {state['answer'].disagreement}\n"
+                         "<instruction: judge the comparison as a whole; you have no access to per-book chunks or findings, so you cannot and must not reference one book's depth specifically>")
+    comparison = llm.with_structured_output(ComparisonCritique).invoke(comparison_prompt)
+    return {"feedback": comparison.feedback, "needs_revision": comparison.needs_revision}
 
 
 def route_after_e_first(state: ReflectionState):
@@ -539,14 +481,19 @@ def route_after_e_first(state: ReflectionState):
 
 reflection_graph = StateGraph(ReflectionState)
 reflection_graph.add_node("retriever", retriever)
+reflection_graph.add_node("retry_retriever", retriever)  # the same callable: the retry entry
+reflection_graph.add_node("e_first", e_first)
+reflection_graph.add_node("e_second", e_second)
 reflection_graph.add_node("composer", composer)
 reflection_graph.add_node("reflect", reflect)
-reflection_graph.add_node("finalize", composer)
-reflection_graph.add_conditional_edges("reflect", route_after_reflection)
 reflection_graph.add_edge(START, "retriever")
-reflection_graph.add_edge("retriever", "composer")
+reflection_graph.add_edge("retriever", "e_first")
+reflection_graph.add_conditional_edges("e_first", route_after_e_first,
+                                       {"retry": "retry_retriever", "done": "composer"})
+reflection_graph.add_edge("retry_retriever", "e_second")
+reflection_graph.add_edge("e_second", "composer")
 reflection_graph.add_edge("composer", "reflect")
-reflection_graph.add_edge("finalize", END)
+reflection_graph.add_edge("reflect", END)
 
 reflection_app = reflection_graph.compile()
 
@@ -584,7 +531,7 @@ if __name__ == "__main__":
             if node == "retriever":
                 for corpus_id in update["corpora"]:
                     print(f"""_Chunks: {corpus_id} -  {len(update["corpora"][corpus_id]["chunks"])} items""")
-            if node in ("composer", "finalize"):
+            if node == "composer":
                 print(f"""_Agreement: {update["answer"].agreement[:width]}""")
                 print(f"""_Disagreement: {update["answer"].disagreement[:width]}\n""")
                 for slot in update["answer"].unique_findings:
@@ -592,18 +539,6 @@ if __name__ == "__main__":
             if node == "reflect":
                 print(f"""_Feedback:  {update["feedback"][:width]}""")
                 print(f"""_Needs_revision: {update["needs_revision"]}\n""")
-                for corpus_id in update["corpora"]:
-                    print(f"""_Chunks: {corpus_id} - {len(update["corpora"][corpus_id]["chunks"])} items""")
-                    print(f"""  _Label: {update["corpora"][corpus_id]["label"]} """)
-                    print(f"""    _Reason: {update["corpora"][corpus_id]["reason"]} """)
-                    print(f"""      _Narrowed_query: {update["corpora"][corpus_id]["narrowed_query"]}""")
-                    print(f"""      _Silence_cause: {update["corpora"][corpus_id]["silence_cause"]}""")
-                    for item in update["corpora"][corpus_id]["lineage"]:
-                        print(
-                            f"""       _It: {item["iteration"]}, Tool: {item["tool"]}, Forced: {item["forced_retriever"]}""")
-                    print("\n")
-                print(
-                    "\n          _____________________________________________________________________________________________\n")
 
 
     async def demo():

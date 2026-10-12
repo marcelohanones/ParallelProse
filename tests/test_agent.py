@@ -5,8 +5,8 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from ParallelProse import agent as ag
-from ParallelProse.agent import (ComparisonCritique, ComposerAnswer, CorpusCritique, CorpusFinding,
-                                 EFirst, EFirstBatch, EPostVerdict, ESecond, PerBookCritique)
+from ParallelProse.agent import (ComparisonCritique, ComposerAnswer, CorpusFinding,
+                                 EFirst, EFirstBatch, EPostVerdict, ESecond, ESecondBatch)
 from ParallelProse.catalog import CATALOG
 
 
@@ -46,27 +46,6 @@ class FakeLLM:
     def with_structured_output(self, schema):
         self.calls[schema] = FakeStructured(self.results[schema])
         return self.calls[schema]
-
-
-@pytest.mark.parametrize("a, b, expected", [
-    ("ok", "ok", "__end__"),
-    ("miss", "ok", "retriever"),
-    ("miss", "silent", "retriever"),
-    ("silent", "ok", "finalize"),
-    ("silent", "silent", "finalize"),
-])
-def test_route_after_reflection(a, b, expected):
-    state = reflection_state({"A": corpus_slot(a), "B": corpus_slot(b)})
-    assert str(ag.route_after_reflection(state)) == expected
-
-
-def test_route_stops_retrying_at_max_iterations_but_still_finalizes_silent():
-    misses_only = reflection_state({"A": corpus_slot("miss"), "B": corpus_slot("ok")},
-                                   iteration=ag.MAX_ITERATIONS)
-    assert str(ag.route_after_reflection(misses_only)) == "__end__"
-    miss_and_silent = reflection_state({"A": corpus_slot("miss"), "B": corpus_slot("silent")},
-                                       iteration=ag.MAX_ITERATIONS)
-    assert ag.route_after_reflection(miss_and_silent) == "finalize"
 
 
 def test_route_after_e_first_retries_only_when_a_book_is_left_miss():
@@ -136,81 +115,60 @@ def test_retriever_retries_a_miss_with_its_narrowed_query(monkeypatch):
                                                "args": {"query": "narrow"}, "forced_retriever": False}]
 
 
-def test_composer_keeps_ok_finding_and_overrides_silent_book(monkeypatch):
-    fake = FakeLLM({ComposerAnswer: composer_answer("A drifted", "other", "B fresh", "qb2")})
+def test_composer_builds_findings_for_ok_books_only(monkeypatch):
+    fake = FakeLLM({ComposerAnswer: composer_answer("A fresh", "qa", "B ghost", "qb2")})
     monkeypatch.setattr(ag, "llm", fake)
-    prior = composer_answer("A kept", "qa", "B old", "qb")
-    state = reflection_state({"A": corpus_slot("ok", chunks=["a"]), "B": corpus_slot("silent", chunks=["b"])},
-                             answer=prior, iteration=2)
+    state = reflection_state({"A": corpus_slot("ok", chunks=["a"]), "B": corpus_slot("silent", chunks=["b"])})
 
     out = ag.composer(state)
 
-    a, b = out["answer"].unique_findings
-    assert (a.claim_in_passage, a.quote) == ("A kept", "qa")
-    assert (b.claim_in_passage, b.quote) == ("query content is absent", None)
+    assert [slot.corpus_id for slot in out["answer"].unique_findings] == ["A"]
     assert out["answer"].agreement == (f"{CATALOG['B'].book_title} does not address the query, "
                                        "so there is no cross-book agreement.")
     assert out["answer"].disagreement == "None: only one book addresses the query."
-    assert out["iteration"] == 3
-    assert "Corpus_id: A = Finding: A kept" in fake.calls[ComposerAnswer].prompts[0]
+    assert out["iteration"] == state["iteration"] + 1
 
 
-def test_composer_with_both_books_silent(monkeypatch):
-    fake = FakeLLM({ComposerAnswer: composer_answer("x", "x", "y", "y")})
-    monkeypatch.setattr(ag, "llm", fake)
-    state = reflection_state({"A": corpus_slot("silent", chunks=["a"]), "B": corpus_slot("silent", chunks=["b"])},
-                             answer=composer_answer("p", "p", "q", "q"))
+def test_composer_skips_the_llm_when_no_book_answers(monkeypatch):
+    class MustNotCompose:
+        def with_structured_output(self, schema):
+            raise AssertionError("no ok book means no composition")
+
+    monkeypatch.setattr(ag, "llm", MustNotCompose())
+    state = reflection_state({"A": corpus_slot("silent", chunks=["a"]), "B": corpus_slot("silent", chunks=["b"])})
 
     out = ag.composer(state)
 
     assert out["answer"].agreement == "Neither book addresses the query."
     assert out["answer"].disagreement == "None."
-    assert [f.claim_in_passage for f in out["answer"].unique_findings] == ["query content is absent"] * 2
+    assert out["answer"].unique_findings == []
 
 
-def test_reflect_builds_the_e_record_and_keeps_a_retry_as_miss(monkeypatch):
-    fake = FakeLLM({
-        EFirstBatch: EFirstBatch(verdicts=[
-            EFirst(corpus_id="A", p_adjacent="yes", p_answers="no", P="pa", retry="yes", narrowed_query="na"),
-            EFirst(corpus_id="B", p_adjacent="yes", p_answers="yes", P="pb", retry="yes", narrowed_query="nb"),
-        ]),
-        ComparisonCritique: ComparisonCritique(needs_revision=True, feedback="fb"),
-    })
-    monkeypatch.setattr(ag, "llm", fake)
-    monkeypatch.setattr(ag, "critique_llm", fake)
-    state = reflection_state({"A": corpus_slot(chunks=["a"]), "B": corpus_slot(chunks=["b"])},
+def test_reflect_short_circuits_when_fewer_than_two_books_answer(monkeypatch):
+    class MustNotCompare:
+        def with_structured_output(self, schema):
+            raise AssertionError("fewer than two ok books means no comparison")
+
+    monkeypatch.setattr(ag, "llm", MustNotCompare())
+    state = reflection_state({"A": corpus_slot("ok"), "B": corpus_slot("silent")},
                              answer=composer_answer("fa", "qa", "fb", "qb"))
 
     out = ag.reflect(state)
 
-    assert out["needs_revision"] is True and out["feedback"] == "fb"
-    assert out["corpora"]["A"] == {"chunks": ["a"], "lineage": [], "label": "miss",
-                                   "reason": "p_answers=no, p_adjacent=yes", "narrowed_query": "na",
-                                   "silence_cause": None, "P": "pa", "retry_used": False}
-    assert out["corpora"]["B"] == {"chunks": ["b"], "lineage": [], "label": "ok",
-                                   "reason": "p_answers=yes, p_adjacent=yes", "narrowed_query": None,
-                                   "silence_cause": None, "P": "pb", "retry_used": False}
+    assert out["needs_revision"] is False
+    assert "fewer than two" in out["feedback"]
 
 
-def test_reflect_derives_silence_cause_and_retry_used_from_the_record_fields(monkeypatch):
-    fake = FakeLLM({
-        EFirstBatch: EFirstBatch(verdicts=[
-            EFirst(corpus_id="A", p_adjacent="no", p_answers="no", P=None, retry="no"),
-            EFirst(corpus_id="B", p_adjacent="yes", p_answers="no", P="pb", retry="no"),
-        ]),
-        ComparisonCritique: ComparisonCritique(needs_revision=False, feedback="fb"),
-    })
+def test_reflect_judges_the_comparison_when_both_books_answer(monkeypatch):
+    fake = FakeLLM({ComparisonCritique: ComparisonCritique(needs_revision=True, feedback="fb")})
     monkeypatch.setattr(ag, "llm", fake)
-    monkeypatch.setattr(ag, "critique_llm", fake)
-    state = reflection_state({"A": corpus_slot("miss", chunks=["a"]), "B": corpus_slot(chunks=["b"])},
+    state = reflection_state({"A": corpus_slot("ok"), "B": corpus_slot("ok")},
                              answer=composer_answer("fa", "qa", "fb", "qb"))
 
     out = ag.reflect(state)
 
-    assert (out["corpora"]["A"]["label"], out["corpora"]["A"]["silence_cause"],
-            out["corpora"]["A"]["retry_used"]) == ("silent", "absence", True)
-    assert (out["corpora"]["B"]["label"], out["corpora"]["B"]["silence_cause"],
-            out["corpora"]["B"]["retry_used"]) == ("silent", "adjacent_topic", False)
+    assert out == {"needs_revision": True, "feedback": "fb"}
+    assert "Agreement: agree" in fake.calls[ComparisonCritique].prompts[0]
 
 
 def test_e_record_maps_ok_miss_and_silent():
@@ -333,3 +291,29 @@ def test_e_first_builds_the_record_and_returns_every_slot(monkeypatch):
                                    "reason": "p_answers=no, p_adjacent=no", "narrowed_query": None,
                                    "silence_cause": "absence", "P": None, "retry_used": False}
     assert "support" not in fake.calls[EFirstBatch].prompts[0]
+
+
+def test_e_second_decides_ok_silent_and_marks_retry_used(monkeypatch):
+    fake = FakeLLM({ESecondBatch: ESecondBatch(verdicts=[
+        ESecond(corpus_id="A", p_adjacent="yes", p_answers="yes", P="pa"),
+        ESecond(corpus_id="B", p_adjacent="no", p_answers="no", P=None),
+    ])})
+    monkeypatch.setattr(ag, "critique_llm", fake)
+    state = reflection_state({"A": corpus_slot("miss", chunks=["a"]), "B": corpus_slot("ok", chunks=["b"])})
+
+    out = ag.e_second(state)
+
+    assert out["corpora"]["A"]["label"] == "ok" and out["corpora"]["A"]["retry_used"] is True
+    assert out["corpora"]["B"]["label"] == "silent" and out["corpora"]["B"]["retry_used"] is False
+
+
+def test_graph_places_e_before_composer_with_a_single_retry_branch():
+    edges = {(edge.source, edge.target, edge.data) for edge in ag.reflection_app.get_graph().edges}
+    assert ("retriever", "e_first", None) in edges
+    assert ("e_first", "retry_retriever", "retry") in edges
+    assert ("e_first", "composer", "done") in edges
+    assert ("retry_retriever", "e_second", None) in edges
+    assert ("e_second", "composer", None) in edges
+    assert ("composer", "reflect", None) in edges
+    assert ("reflect", "__end__", None) in edges
+    assert not any("finalize" in (source, target) for source, target, _ in edges)
