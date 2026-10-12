@@ -144,6 +144,28 @@ def test_side_is_target_reads_the_corpora_not_the_composer():
     assert tb.side_is_target(corpora, None) == {"A": None, "B": None}
 
 
+def test_bite_id_map_is_keyed_by_the_corpora_not_the_composer(tmp_path, monkeypatch):
+    monkeypatch.setattr(tb, "BATCHES_PATH", tmp_path)
+    monkeypatch.setattr(tb, "QUERY_PAUSE_SECONDS", 0)
+    monkeypatch.setattr(tb, "build_witness_view", lambda path: None)
+
+    async def fake_run_query(query):
+        return {"answer": ComposerAnswer(agreement="x", disagreement="x", unique_findings=[
+            CorpusFinding(corpus_id="A", claim_in_passage="a", quote="qa")]),
+            "corpora": corpora_for()}
+
+    monkeypatch.setattr(tb, "run_query", fake_run_query)
+    batch_file = tmp_path / "themes.md"
+    batch_file.write_text("Theme 1: T\n\nThesis 1.1: x\n  Query 1.1a: a shared query\n")
+
+    asyncio.run(tb.run_theme_batches(batch_file))
+
+    stored = json.loads(next(tmp_path.glob("augustine_debord/*/theme-01*/thesis-01.json")).read_text())
+    bite = stored["bites"][0]
+    assert set(bite["bite_id"]) == {"A", "B"}
+    assert bite["bite_id"]["B"] == tb.compute_bite_id("B", None, "a shared query")
+
+
 def test_slugify_is_ascii_hyphenated_and_capped():
     assert tb.slugify("Time, memory & the self") == "time-memory-the-self"
     assert tb.slugify("Símbolo e Ação") == "simbolo-e-acao"

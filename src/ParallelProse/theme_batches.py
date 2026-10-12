@@ -126,8 +126,10 @@ async def answer_query(query: str, side: str | None) -> tuple[ComposerAnswer, di
                                             books={side} if side else None)
     quote_details = verify_quotes(answer, result["corpora"], query)
     side_target = side_is_target(result["corpora"], side)
+    findings = {f.corpus_id: f for f in answer.unique_findings}
     extra = {
-        "bite_id": {f.corpus_id: compute_bite_id(f.corpus_id, f.quote, query) for f in answer.unique_findings},
+        "bite_id": {cid: compute_bite_id(cid, findings[cid].quote if cid in findings else None, query)
+                    for cid in result["corpora"]},
         "quote_selection": quote_selection,
         "side_is_target": side_target,
         "verified": verified_flags(quote_details),
