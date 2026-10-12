@@ -3,12 +3,11 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-SILENT = "query content is absent"
 THRESHOLD = 0.20
 
 
-def classify(answer: dict) -> str:
-    silent = {f["corpus_id"] for f in answer["unique_findings"] if f["claim_in_passage"] == SILENT}
+def classify(retrieval: dict) -> str:
+    silent = {cid for cid, record in retrieval.items() if record["label"] == "silent"}
     if not silent:
         return "both"
     if silent == {"A", "B"}:
@@ -20,7 +19,7 @@ def one_sided_report(session_dir: Path) -> dict:
     counts = Counter()
     for thesis_file in sorted(session_dir.glob("theme-*/thesis-*.json")):
         for bite in json.loads(thesis_file.read_text())["bites"]:
-            counts[classify(bite["answer"])] += 1
+            counts[classify(bite["retrieval"])] += 1
     total = sum(counts.values())
     one_sided = sum(n for k, n in counts.items() if k.startswith("one-sided"))
     return {"total": total, "counts": dict(counts), "one_sided_share": one_sided / total if total else 0.0,
