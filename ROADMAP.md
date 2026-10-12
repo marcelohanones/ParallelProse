@@ -26,7 +26,8 @@
   here from v3 since v3's own completion no longer waits on them, and now land after the synthesis layer so they cover
   it too. Items 36-43, next up, are the handoff between this system and the side that writes the queries and the
   ideas: bite identity, verification against the book, the witness-view export, a rejectable standard for idea units,
-  the `ok` and `silent` labels, and a falsification round. See "v4 — after v3 is complete" below.
+  the `ok` and `silent` labels, and a falsification round; item 41 closed 2026-10-11 with the `silent` split landed
+  and the false `ok` diagnosed as a task problem, and item 44 carries that fix. See "v4 — after v3 is complete" below.
 - **RAG-Tetris** — a separate future project (comparing code across versions), out of scope here.
 
 Suggested build order below follows dependency, not memory-entry order: state shape and the merge come first because
@@ -949,9 +950,10 @@ null-search registry is item 43's job. Verified end-to-end against the real book
 (item 37's own example): a unit anchored to it is accepted, and corrupting the indexed quote text is rejected with
 `not found in book A`. 125/125 tests pass.
 
-### 41. `ok` defined, the false `ok` fixed, and `silent` split
+### 41. `ok` defined, `silent` split, and the false `ok` diagnosed
 
-**Status: partially done (2026-10-11) — the split landed, the false-`ok` fix did not.** **What:** three steps, in order. Write down what `ok` asserts — that this book answers the
+**Status: closed (2026-10-11) — the split and the definition landed, the false-`ok` cause was measured, and the fix
+moved to item 44.** **What:** three steps, in order. Write down what `ok` asserts — that this book answers the
 query, not that the query's subject appears in it — in `CorpusCritique.label`'s description (`agent.py:53`). Then fix
 the disagreement that measures: in the first full golden-set run, 6 of 32 labels disagree with the golden set, and
 every one of the 6 is a book expected `silent` and labelled `ok` (g07 B, g09 B, g10 B, g11 B, g13 A, g15 A). Then
@@ -963,21 +965,15 @@ before the split imports the error: of the 12 silent verdicts in the history, 9 
 twin. **Synergy:** feeds item 40, whose single-voice type is populated from genuine absence; independent of items
 36-39.
 
-**Built as / measured result:** the split (step 3) landed and works: `CorpusCritique` gains `silence_cause`
-(LLM-judged `adjacent_topic`/`absence`, only when `label == "silent"`), threaded through `CorpusState`, with
-`theme_batches.resolve_silence_cause` deterministically overriding to `non_target_twin` when
-`side_is_target[cid] is False` — the critique LLM has no access to twin-tagging (`run_query` never receives
-`side`), so this override has to live outside the graph. All six golden-set entries re-run against the real
-graph after the step-1 description rewrite: **zero flipped.** `g07`'s book B still labels `ok`, and the critique's
-own `reason` reveals why: the model builds (or, on a second, more directive prompt attempt, flatly misstates) a
-causal bridge from a passage about spectacle/alienation to "the heart is restless" that the passage does not
-state — a content misrepresentation, not a borderline relevance call a label description can fix. A second,
-more forceful rewrite (forcing the model to self-check for an added inferential step) was tried on `g07` alone
-and made it worse: the model's `reason` then claimed the passage "clearly articulates" the restlessness directly
-— false on its face. Stopped there rather than keep spending real calls on prompt iteration with diminishing
-signal; this reads as a `gpt-4o-mini`/temperature-0.5 capability limit, not a wording problem. The false-`ok` fix
-is left open; a revisit should try `temperature=0` on the critique call specifically, or a stronger model for
-that one call, before any more prompt rewriting. All of this was verified with real OpenAI calls, not mocks.
+**Built as:** step 3 landed and works: `CorpusCritique` gains `silence_cause` (LLM-judged `adjacent_topic`/`absence`,
+only when `label == "silent"`), threaded through `CorpusState`, with `theme_batches.resolve_silence_cause`
+deterministically overriding to `non_target_twin` when `side_is_target[cid] is False` — the critique LLM never sees
+`side`, so that override lives outside the graph. Step 1 landed as the definition above. Step 2 did **not**, and the
+measurement says it could not have, in that place: two prompt rewrites moved zero labels, and **neither temperature
+nor model moves them either** — the C control ran the six entries as baseline (`gpt-4o-mini`/0.5), at temperature 0,
+and at `gpt-4o`/temperature 0, with identical verdicts, every `reason` reading as support for the composer's draft
+(`data/eval/c_control_{baseline,temp0,gpt4o}_2026-10-11_*.json`). The verdict call is a support-question, not a
+badly-worded relevance judgment, so its fix is a different call shape — see item 44.
 
 ### 42. `claim_in_passage` and `form` in the composer's output
 
@@ -1011,8 +1007,35 @@ support.
 read the search rather than the silence, because a retrieval miss and an absence in the book look identical from
 outside. Three golden-set entries (g07, g08, g09) are known failures precisely because their runs return the wrong
 passage, so a falsification test landing on one of those formulations would otherwise read as "nothing against it".
-**Synergy:** runs last. It depends on item 37 (a quote nobody can locate is not evidence), on item 41 (a false `ok`
+**Synergy:** runs last. It depends on item 37 (a quote nobody can locate is not evidence), on item 44 (a false `ok`
 reads as the counter-example having been found), and on item 40, where the units and their tests are written.
+
+### 44. E: an evidence-only per-book verdict — the false `ok` fix
+
+**Status: not started (design closed 2026-10-11).** Build-ready spec: `docs/item41_E_spec.md` (named for the item it
+grew out of; rename pending). **What:** a dedicated per-book judge that answers two questions on the retrieved
+evidence alone — `p_adjacent` first ("does some chunk treat the query's theme under some proposition?"), then
+`p_answers` ("does some chunk's own wording answer the query?") — and emits `P`, the passage's proposition (the
+answering one, or the adjacent one for a silent book), plus a retry signal derived from the two: retry only when
+`p_answers = no` and `p_adjacent = yes`, at most once, with `narrowed_query` null whenever retry is no. The
+derivation is rewritten by a post-process outside the LLM, never rejected. E runs between `retriever` and `composer`
+(option 1): composer then runs only on `ok` books, `reflect` shrinks to the comparison critique, and E's per-book
+record becomes canonical — `{label, P}` for `ok`, `{label, silence_cause, P, retry_used}` for `silent` — which the
+export, `one_sided` and the `bite_id` map read instead of composer findings.
+
+**Why:** measured twice. The C control showed the failure is the task, not capability (three variants, zero flips;
+every reason reads "supports the finding/claim"). The A-alone probe — draft removed, question re-pointed — flipped
+all six false `ok`s but netted 26/32 on the full set: every regression sat on a side whose answering anchor was
+absent from the chunks, because draft-mode bridging had been masking retrieval misses. E therefore needs both the
+evidence-only judgment and the retry signal, with `P` keeping the adjacent material that item 40's single-voice units
+and item 39's silent witness read. **Synergy:** unblocks item 43 (a false `ok` reads as the counter-example having
+been found); feeds item 40; takes the item-37 direction for book-level checks.
+
+**Fixtures and calibration:** six bridge fixtures (g07 B, g09 B, g10 B, g11 B, g13 A, g15 A), the retry pair (the
+Anon query and g12 A), `g16 B` as the `p_adjacent = no` guard, a contested-adjacency counter, and a `P` probe. The
+calibration reads three outputs per side (label, retry expectation, `P`) against all 32 labels; the triage line
+carries both its positive and negative sides, and a seed gate — two seeded baseline runs — clears before it starts.
+Queued data edits: `g13 A` `near_miss: false`, the new `g17` Anon entry, and the golden spec's count rule 16 to 17.
 
 ### Backlog (deferred, not dropped)
 

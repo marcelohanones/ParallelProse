@@ -10,6 +10,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
 import json
+import os
 
 from ParallelProse.catalog import CATALOG
 from ParallelProse.mcp_tools import PORT, http_client, mcp, mcp_tools_as_langchain_tools
@@ -18,6 +19,18 @@ warnings.filterwarnings("ignore")
 load_dotenv()
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
+
+# The per-book verdict is a factual judgment, not prose, so it gets its own client: its temperature and model can be
+# set independently of the composer's. The env overrides exist for item 41's C control (temperature 0 / gpt-4o on
+# this call only); the defaults reproduce the behaviour before the control.
+CRITIQUE_MODEL = os.getenv("PP_CRITIQUE_MODEL", "gpt-4o-mini")
+CRITIQUE_TEMPERATURE = float(os.getenv("PP_CRITIQUE_TEMPERATURE", "0.5"))
+critique_llm = ChatOpenAI(model=CRITIQUE_MODEL, temperature=CRITIQUE_TEMPERATURE)
+
+# Item 41's A probe: with PP_CRITIQUE_MODE=evidence the per-book call judges the passages alone — the draft is
+# removed from its input and its question is re-pointed at the book. The default ("draft") is the behaviour
+# before the probe.
+CRITIQUE_MODE = os.getenv("PP_CRITIQUE_MODE", "draft")
 
 MAX_ITERATIONS = 5
 MAX_TOOL_CALLS = 4
@@ -306,23 +319,37 @@ def reflect(state: ReflectionState):
     chunks = format_context(state["corpora"])
     answer = format_answer(state['answer'])
     # 2 - This section does a per-book call.
-    per_book_llm = llm.with_structured_output(PerBookCritique)
-    per_book = per_book_llm.invoke(
-        f"Books:\n{book_map}\n\n"
-        f"Query: {state['query']}\n\n"
-        f"Answer:\n{answer}\n\n"
-        f"Retrieved passages per book:\n{chunks}\n\n"
-        f"Queries already tried per book:\n{attempts}\n\n"
-        "Critique the answer for factual accuracy against the retrieved passages, and for completeness "
-        "relative to what the query itself asks — not for exhaustiveness relative to the passages. A "
-        "passage almost always contains more than the query asks about; do not flag the answer for "
-        "leaving out something the query does not ask about.\n"
-        "Each finding already includes its own verbatim quote in parentheses — do not treat that as "
-        "missing evidence or ask for quotes to be added or integrated; judge factual accuracy and "
-        "completeness only.\n"
-        "Then, for each book listed above, add one entry to corpora_critique: corpus_id must be "
-        "exactly A or B as given above, plus label, reason, and narrowed_query."
-    )
+    per_book_llm = critique_llm.with_structured_output(PerBookCritique)
+    if CRITIQUE_MODE == "evidence":
+        per_book_prompt = (
+            f"Books:\n{book_map}\n\n"
+            f"Query: {state['query']}\n\n"
+            f"Retrieved passages per book:\n{chunks}\n\n"
+            f"Queries already tried per book:\n{attempts}\n\n"
+            "For each book listed above, judge whether that book's own retrieved passages answer the "
+            "query. Work only from the passages: do not write a draft answer, and do not connect a "
+            "passage to the query by a step the passage does not itself state.\n"
+            "Then, for each book listed above, add one entry to corpora_critique: corpus_id must be "
+            "exactly A or B as given above, plus label, reason, and narrowed_query."
+        )
+    else:
+        per_book_prompt = (
+            f"Books:\n{book_map}\n\n"
+            f"Query: {state['query']}\n\n"
+            f"Answer:\n{answer}\n\n"
+            f"Retrieved passages per book:\n{chunks}\n\n"
+            f"Queries already tried per book:\n{attempts}\n\n"
+            "Critique the answer for factual accuracy against the retrieved passages, and for completeness "
+            "relative to what the query itself asks — not for exhaustiveness relative to the passages. A "
+            "passage almost always contains more than the query asks about; do not flag the answer for "
+            "leaving out something the query does not ask about.\n"
+            "Each finding already includes its own verbatim quote in parentheses — do not treat that as "
+            "missing evidence or ask for quotes to be added or integrated; judge factual accuracy and "
+            "completeness only.\n"
+            "Then, for each book listed above, add one entry to corpora_critique: corpus_id must be "
+            "exactly A or B as given above, plus label, reason, and narrowed_query."
+        )
+    per_book = per_book_llm.invoke(per_book_prompt)
     # 2 - comparison call: restricted inputs, new schema
     comparison_prompt = f"Query: {state['query']}\n" \
                         f"Agreement: {state['answer'].agreement}\n" \

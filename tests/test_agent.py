@@ -168,6 +168,7 @@ def test_reflect_returns_every_book_with_narrowed_query_only_on_miss(monkeypatch
         ComparisonCritique: ComparisonCritique(needs_revision=True, feedback="fb"),
     })
     monkeypatch.setattr(ag, "llm", fake)
+    monkeypatch.setattr(ag, "critique_llm", fake)
     state = reflection_state({"A": corpus_slot(chunks=["a"]), "B": corpus_slot(chunks=["b"])},
                              answer=composer_answer("fa", "qa", "fb", "qb"))
 
@@ -190,6 +191,7 @@ def test_reflect_keeps_silence_cause_only_on_silent(monkeypatch):
         ComparisonCritique: ComparisonCritique(needs_revision=False, feedback="fb"),
     })
     monkeypatch.setattr(ag, "llm", fake)
+    monkeypatch.setattr(ag, "critique_llm", fake)
     state = reflection_state({"A": corpus_slot(chunks=["a"]), "B": corpus_slot(chunks=["b"])},
                              answer=composer_answer("fa", "qa", "fb", "qb"))
 
