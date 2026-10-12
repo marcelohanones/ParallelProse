@@ -182,12 +182,14 @@ def select_quotes(answer: ComposerAnswer, corpora: dict, query: str,
     are considered (None means all): a twin query's non-target book keeps the composer's quote."""
     query_terms = _content_terms(query)
     query_form = match_form(query, is_quote=True)
+    findings_by_cid = {f.corpus_id: f for f in answer.unique_findings}
     selection, findings = {}, []
-    for finding in answer.unique_findings:
-        cid = finding.corpus_id
-        if finding.quote is None or (books is not None and cid not in books):
+    for cid in corpora:
+        finding = findings_by_cid.get(cid)
+        if finding is None or finding.quote is None or (books is not None and cid not in books):
             selection[cid] = {"replaced": False}
-            findings.append(finding)
+            if finding is not None:
+                findings.append(finding)
             continue
         sentences = [(s, _content_terms(s)) for chunk in corpora[cid]["chunks"]
                      for s in re.split(r"(?<=[.!?;:])\s+", re.sub(r"\s+", " ", chunk).strip()) if s.strip()]

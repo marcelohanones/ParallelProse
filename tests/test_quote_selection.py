@@ -59,6 +59,15 @@ def test_a_book_without_a_quote_is_left_alone():
     assert selection == {"A": {"replaced": False}}
 
 
+def test_a_book_the_composer_omitted_still_gets_a_selection_entry():
+    answer = ComposerAnswer(agreement="", disagreement="", unique_findings=[])
+
+    adjusted, selection = select_quotes(answer, {"A": {"chunks": [CHUNK]}, "B": {"chunks": [CHUNK]}}, QUERY)
+
+    assert adjusted.unique_findings == []
+    assert selection == {"A": {"replaced": False}, "B": {"replaced": False}}
+
+
 def test_a_non_target_book_keeps_the_composer_quote():
     answer = ComposerAnswer(agreement="", disagreement="", unique_findings=[
         CorpusFinding(corpus_id="A", claim_in_passage="f", quote="What sort of compassion is this for feigned and scenical passions?"),
