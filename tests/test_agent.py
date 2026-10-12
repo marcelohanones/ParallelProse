@@ -69,6 +69,13 @@ def test_route_stops_retrying_at_max_iterations_but_still_finalizes_silent():
     assert ag.route_after_reflection(miss_and_silent) == "finalize"
 
 
+def test_route_after_e_first_retries_only_when_a_book_is_left_miss():
+    assert ag.route_after_e_first({
+        "corpora": {"A": corpus_slot("miss"), "B": corpus_slot("ok")}}) == "retry"
+    assert ag.route_after_e_first({
+        "corpora": {"A": corpus_slot("ok"), "B": corpus_slot("silent")}}) == "done"
+
+
 def test_retriever_forwards_skipped_slots_unchanged(monkeypatch):
     monkeypatch.setattr(ag, "bridged_tools_by_corpus", {})
     monkeypatch.setattr(ag, "retrieval_agents_by_corpus", {})

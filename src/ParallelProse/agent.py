@@ -527,6 +527,16 @@ def route_after_reflection(state: ReflectionState):
     return END
 
 
+def route_after_e_first(state: ReflectionState):
+    """The retry decision, placed after e_first: any book e_first left 'miss' owes the retry round;
+    otherwise the flow moves on to composer. Retry fires at most once because the retry node's only
+    outgoing edge lands on e_second, never back on e_first."""
+    for corpus_id in state["corpora"]:
+        if state["corpora"][corpus_id]["label"] == "miss":
+            return "retry"
+    return "done"
+
+
 reflection_graph = StateGraph(ReflectionState)
 reflection_graph.add_node("retriever", retriever)
 reflection_graph.add_node("composer", composer)
