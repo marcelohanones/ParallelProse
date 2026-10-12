@@ -439,6 +439,31 @@ def e_record(verdict: EPostVerdict, retry_used: bool) -> dict:
     return {"label": label, "silence_cause": silence_cause, "P": verdict.P, "retry_used": retry_used}
 
 
+# MARK: E FIRST (item 44.3)
+def e_first(state: ReflectionState) -> dict:
+    """E's first look as its own graph node: one evidence-only call over both books — query, chunks
+    and lineage, never the composer's draft — then postprocess_e and e_record turn each raw verdict
+    into the canonical per-book record. The comparison critique stays out of this node."""
+    first = e_judge_first(state["query"], state["corpora"])
+    verdicts = {verdict.corpus_id: postprocess_e(verdict) for verdict in first.verdicts}
+    corpora = {}
+    for corpus_id in state["corpora"]:
+        verdict = verdicts[corpus_id]
+        retry_used = state["corpora"][corpus_id]["label"] == "miss"
+        record = e_record(verdict, retry_used)
+        corpora[corpus_id] = {
+            "chunks": state["corpora"][corpus_id]["chunks"],
+            "lineage": state["corpora"][corpus_id]["lineage"],
+            "label": record["label"],
+            "reason": f"p_answers={verdict.p_answers}, p_adjacent={verdict.p_adjacent}",
+            "narrowed_query": verdict.narrowed_query,
+            "silence_cause": record["silence_cause"],
+            "P": record["P"],
+            "retry_used": record["retry_used"],
+        }
+    return {"corpora": corpora}
+
+
 # MARK: REFLECT
 def reflect(state: ReflectionState):
     """The graph's per-book judge and cross-book critic. The per-book half is now E's evidence-only look

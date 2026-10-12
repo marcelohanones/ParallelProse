@@ -306,3 +306,23 @@ def test_postprocess_e_logs_the_rewrite_without_rejecting(capsys):
     log = capsys.readouterr().out
     assert "rewrote" in log and "book A" in log
     assert out.retry == "no"
+
+
+def test_e_first_builds_the_record_and_returns_every_slot(monkeypatch):
+    fake = FakeLLM({EFirstBatch: EFirstBatch(verdicts=[
+        EFirst(corpus_id="A", p_adjacent="yes", p_answers="no", P="pa", retry="yes", narrowed_query="na"),
+        EFirst(corpus_id="B", p_adjacent="no", p_answers="no", P=None, retry="no", narrowed_query=None),
+    ])})
+    monkeypatch.setattr(ag, "critique_llm", fake)
+    state = reflection_state({"A": corpus_slot(chunks=["a"]), "B": corpus_slot(chunks=["b"])})
+
+    out = ag.e_first(state)
+
+    assert set(out["corpora"]) == {"A", "B"}  # the state invariant: no slot omitted
+    assert out["corpora"]["A"] == {"chunks": ["a"], "lineage": [], "label": "miss",
+                                   "reason": "p_answers=no, p_adjacent=yes", "narrowed_query": "na",
+                                   "silence_cause": None, "P": "pa", "retry_used": False}
+    assert out["corpora"]["B"] == {"chunks": ["b"], "lineage": [], "label": "silent",
+                                   "reason": "p_answers=no, p_adjacent=no", "narrowed_query": None,
+                                   "silence_cause": "absence", "P": None, "retry_used": False}
+    assert "support" not in fake.calls[EFirstBatch].prompts[0]
