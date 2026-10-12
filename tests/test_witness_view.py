@@ -63,12 +63,14 @@ def test_comparison_fields_never_appear_in_the_output(tmp_path, monkeypatch):
         assert forbidden not in witness_text
 
 
-def test_a_silent_book_carries_no_quote_but_still_gets_a_record(tmp_path, monkeypatch):
+def test_a_silent_book_carries_P_and_still_gets_a_record(tmp_path, monkeypatch):
     monkeypatch.setattr("ParallelProse.witness_view.context_window", lambda book, quote: None)
     consolidated = write_session(tmp_path, [
         bite("1.1a", "q1",
              [{"corpus_id": "A", "claim_in_passage": "query content is absent", "quote": None}],
-             {"A": {"label": "silent", "lineage": [], "silence_cause": "absence"}}, {"A": None},
+             {"A": {"label": "silent", "lineage": [], "silence_cause": "adjacent_topic",
+                    "P": "the adjacent proposition"}},
+             {"A": None},
              {"A": {"status": "no_quote"}}, {"A": {"replaced": False}}, {"A": "idA"}),
     ])
 
@@ -76,8 +78,24 @@ def test_a_silent_book_carries_no_quote_but_still_gets_a_record(tmp_path, monkey
 
     assert record["quote"] is None
     assert record["context_window"] is None
-    assert record["finding"] == "query content is absent"
-    assert record["retrieval"]["silence_cause"] == "absence"
+    assert record["finding"] == "the adjacent proposition"
+    assert record["retrieval"]["silence_cause"] == "adjacent_topic"
+
+
+def test_a_silent_book_the_composer_omits_still_gets_a_record(tmp_path, monkeypatch):
+    monkeypatch.setattr("ParallelProse.witness_view.context_window", lambda book, quote: None)
+    consolidated = write_session(tmp_path, [
+        bite("1.1a", "q1",
+             [],
+             {"A": {"label": "silent", "lineage": [], "silence_cause": "absence", "P": None}},
+             {"A": None},
+             {"A": {"status": "no_quote"}}, {"A": {"replaced": False}}, {"A": "idA"}),
+    ])
+
+    record = json.loads(build_witness_view(consolidated).read_text())["records"][0]
+
+    assert record["corpus_id"] == "A"
+    assert record["finding"] is None
 
 
 def test_field_order_puts_quote_before_finding(tmp_path, monkeypatch):

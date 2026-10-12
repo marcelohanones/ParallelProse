@@ -89,9 +89,9 @@ def compute_bite_id(corpus_id: str, quote: str | None, query: str) -> str:
     return sha256(json.dumps([PROJECT, corpus_id, span]).encode()).hexdigest()[:8]
 
 
-def side_is_target(answer: ComposerAnswer, side: str | None) -> dict[str, bool | None]:
+def side_is_target(corpora: dict, side: str | None) -> dict[str, bool | None]:
     """Per book, whether that book is the one a twin query was tagged with. None for an untagged query, where neither side is the target."""
-    return {f.corpus_id: None if side is None else f.corpus_id == side for f in answer.unique_findings}
+    return {cid: None if side is None else cid == side for cid in corpora}
 
 
 def resolve_silence_cause(label: str, llm_cause: str | None, target: bool | None) -> str | None:
@@ -125,7 +125,7 @@ async def answer_query(query: str, side: str | None) -> tuple[ComposerAnswer, di
     answer, quote_selection = select_quotes(result["answer"], result["corpora"], query,
                                             books={side} if side else None)
     quote_details = verify_quotes(answer, result["corpora"], query)
-    side_target = side_is_target(result["answer"], side)
+    side_target = side_is_target(result["corpora"], side)
     extra = {
         "bite_id": {f.corpus_id: compute_bite_id(f.corpus_id, f.quote, query) for f in answer.unique_findings},
         "quote_selection": quote_selection,

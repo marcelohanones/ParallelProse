@@ -137,6 +137,13 @@ def test_retrieval_diagnostics_tolerates_a_book_missing_from_side_target():
     assert result["B"]["silence_cause"] == "absence"
 
 
+def test_side_is_target_reads_the_corpora_not_the_composer():
+    corpora = {"A": {"chunks": []}, "B": {"chunks": []}}
+
+    assert tb.side_is_target(corpora, "A") == {"A": True, "B": False}
+    assert tb.side_is_target(corpora, None) == {"A": None, "B": None}
+
+
 def test_slugify_is_ascii_hyphenated_and_capped():
     assert tb.slugify("Time, memory & the self") == "time-memory-the-self"
     assert tb.slugify("Símbolo e Ação") == "simbolo-e-acao"
