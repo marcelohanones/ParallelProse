@@ -5,7 +5,8 @@ from ParallelProse.one_sided import one_sided_report
 
 
 def bite(a, b):
-    findings = [{"corpus_id": "A", "finding": a, "quote": None}, {"corpus_id": "B", "finding": b, "quote": None}]
+    findings = [{"corpus_id": "A", "claim_in_passage": a, "quote": None},
+               {"corpus_id": "B", "claim_in_passage": b, "quote": None}]
     return {"query": "q", "answer": {"agreement": "x", "disagreement": "x", "unique_findings": findings}}
 
 

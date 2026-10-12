@@ -9,9 +9,9 @@ from ParallelProse.agent import ComparisonCritique, ComposerAnswer, CorpusCritiq
 from ParallelProse.catalog import CATALOG
 
 
-def corpus_slot(label=None, chunks=None, lineage=None, reason=None, narrowed_query=None):
+def corpus_slot(label=None, chunks=None, lineage=None, reason=None, narrowed_query=None, silence_cause=None):
     return {"chunks": chunks, "lineage": lineage or [], "label": label, "reason": reason,
-            "narrowed_query": narrowed_query}
+            "narrowed_query": narrowed_query, "silence_cause": silence_cause}
 
 
 def reflection_state(corpora, answer="", iteration=1, needs_revision=False):
@@ -21,8 +21,8 @@ def reflection_state(corpora, answer="", iteration=1, needs_revision=False):
 
 def composer_answer(a_finding, a_quote, b_finding, b_quote, agreement="agree", disagreement="disagree"):
     return ComposerAnswer(agreement=agreement, disagreement=disagreement, unique_findings=[
-        CorpusFinding(corpus_id="A", finding=a_finding, quote=a_quote),
-        CorpusFinding(corpus_id="B", finding=b_finding, quote=b_quote),
+        CorpusFinding(corpus_id="A", claim_in_passage=a_finding, quote=a_quote),
+        CorpusFinding(corpus_id="B", claim_in_passage=b_finding, quote=b_quote),
     ])
 
 
@@ -89,9 +89,9 @@ def test_retriever_forwards_skipped_slots_unchanged(monkeypatch):
     out = asyncio.run(ag.retriever(state))
 
     assert out["corpora"]["A"] == {"chunks": ["a1"], "lineage": lineage, "label": "ok", "reason": "ra",
-                                   "narrowed_query": None}
+                                   "narrowed_query": None, "silence_cause": None}
     assert out["corpora"]["B"] == {"chunks": ["b1"], "lineage": [], "label": "silent", "reason": "rb",
-                                   "narrowed_query": None}
+                                   "narrowed_query": None, "silence_cause": None}
 
 
 def test_retriever_retries_a_miss_with_its_narrowed_query(monkeypatch):
@@ -137,8 +137,8 @@ def test_composer_keeps_ok_finding_and_overrides_silent_book(monkeypatch):
     out = ag.composer(state)
 
     a, b = out["answer"].unique_findings
-    assert (a.finding, a.quote) == ("A kept", "qa")
-    assert (b.finding, b.quote) == ("query content is absent", None)
+    assert (a.claim_in_passage, a.quote) == ("A kept", "qa")
+    assert (b.claim_in_passage, b.quote) == ("query content is absent", None)
     assert out["answer"].agreement == (f"{CATALOG['B'].book_title} does not address the query, "
                                        "so there is no cross-book agreement.")
     assert out["answer"].disagreement == "None: only one book addresses the query."
@@ -156,7 +156,7 @@ def test_composer_with_both_books_silent(monkeypatch):
 
     assert out["answer"].agreement == "Neither book addresses the query."
     assert out["answer"].disagreement == "None."
-    assert [f.finding for f in out["answer"].unique_findings] == ["query content is absent"] * 2
+    assert [f.claim_in_passage for f in out["answer"].unique_findings] == ["query content is absent"] * 2
 
 
 def test_reflect_returns_every_book_with_narrowed_query_only_on_miss(monkeypatch):
@@ -176,6 +176,24 @@ def test_reflect_returns_every_book_with_narrowed_query_only_on_miss(monkeypatch
     assert out["needs_revision"] is True
     assert out["feedback"] == "fb"
     assert out["corpora"]["A"] == {"chunks": ["a"], "lineage": [], "label": "miss", "reason": "ra",
-                                   "narrowed_query": "na"}
+                                   "narrowed_query": "na", "silence_cause": None}
     assert out["corpora"]["B"] == {"chunks": ["b"], "lineage": [], "label": "ok", "reason": "rb",
-                                   "narrowed_query": None}
+                                   "narrowed_query": None, "silence_cause": None}
+
+
+def test_reflect_keeps_silence_cause_only_on_silent(monkeypatch):
+    fake = FakeLLM({
+        PerBookCritique: PerBookCritique(corpora_critique=[
+            CorpusCritique(corpus_id="A", label="silent", reason="ra", silence_cause="absence"),
+            CorpusCritique(corpus_id="B", label="ok", reason="rb", silence_cause="adjacent_topic"),
+        ]),
+        ComparisonCritique: ComparisonCritique(needs_revision=False, feedback="fb"),
+    })
+    monkeypatch.setattr(ag, "llm", fake)
+    state = reflection_state({"A": corpus_slot(chunks=["a"]), "B": corpus_slot(chunks=["b"])},
+                             answer=composer_answer("fa", "qa", "fb", "qb"))
+
+    out = ag.reflect(state)
+
+    assert out["corpora"]["A"]["silence_cause"] == "absence"
+    assert out["corpora"]["B"]["silence_cause"] is None

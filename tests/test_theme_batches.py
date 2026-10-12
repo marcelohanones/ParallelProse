@@ -24,15 +24,17 @@ Thesis 2.1: Both books tie experienced time to the self.
 
 def answer(text):
     return ComposerAnswer(agreement=text, disagreement="none", unique_findings=[
-        CorpusFinding(corpus_id="A", finding="a", quote="qa"),
-        CorpusFinding(corpus_id="B", finding="b", quote="qb"),
+        CorpusFinding(corpus_id="A", claim_in_passage="a", quote="qa"),
+        CorpusFinding(corpus_id="B", claim_in_passage="b", quote="qb"),
     ])
 
 
 def corpora_for(chunk_a="qa", chunk_b="qb"):
     return {
-        "A": {"chunks": [f"some text {chunk_a} more text"], "label": "ok", "reason": "fine", "lineage": []},
-        "B": {"chunks": [f"other text {chunk_b} more text"], "label": "ok", "reason": "fine", "lineage": []},
+        "A": {"chunks": [f"some text {chunk_a} more text"], "label": "ok", "reason": "fine", "lineage": [],
+             "silence_cause": None},
+        "B": {"chunks": [f"other text {chunk_b} more text"], "label": "ok", "reason": "fine", "lineage": [],
+             "silence_cause": None},
     }
 
 
@@ -116,6 +118,25 @@ def test_bite_id_falls_back_to_the_query_when_there_is_no_quote():
     assert bite_id and bite_id == tb.compute_bite_id("A", None, "a silent query")
 
 
+@pytest.mark.parametrize("label, llm_cause, target, expected", [
+    ("silent", "adjacent_topic", True, "adjacent_topic"),
+    ("silent", "absence", None, "absence"),
+    ("silent", "adjacent_topic", False, "non_target_twin"),
+    ("ok", "adjacent_topic", False, None),
+])
+def test_resolve_silence_cause(label, llm_cause, target, expected):
+    assert tb.resolve_silence_cause(label, llm_cause, target) == expected
+
+
+def test_retrieval_diagnostics_tolerates_a_book_missing_from_side_target():
+    corpora = {"A": {"label": "ok", "reason": "r", "lineage": [], "silence_cause": None},
+              "B": {"label": "silent", "reason": "r", "lineage": [], "silence_cause": "absence"}}
+
+    result = tb.retrieval_diagnostics(corpora, side_target={"A": True})
+
+    assert result["B"]["silence_cause"] == "absence"
+
+
 def test_slugify_is_ascii_hyphenated_and_capped():
     assert tb.slugify("Time, memory & the self") == "time-memory-the-self"
     assert tb.slugify("Símbolo e Ação") == "simbolo-e-acao"
@@ -157,7 +178,8 @@ def test_run_theme_batches_builds_the_session_tree(tmp_path, monkeypatch):
     assert "synthesis" not in first_thesis
     assert first_thesis["bites"][0]["code"] == "1.1a"
     assert first_thesis["bites"][0]["verified"] == {"A": True, "B": True}
-    assert first_thesis["bites"][0]["retrieval"]["A"] == {"label": "ok", "reason": "fine", "lineage": []}
+    assert first_thesis["bites"][0]["retrieval"]["A"] == {"label": "ok", "reason": "fine", "lineage": [],
+                                                           "silence_cause": None}
     assert set(first_thesis["bites"][0]["bite_id"]) == {"A", "B"}
     assert first_thesis["bites"][0]["bite_id"]["A"] != first_thesis["bites"][0]["bite_id"]["B"]
 

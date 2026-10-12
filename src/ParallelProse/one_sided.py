@@ -8,7 +8,7 @@ THRESHOLD = 0.20
 
 
 def classify(answer: dict) -> str:
-    silent = {f["corpus_id"] for f in answer["unique_findings"] if f["finding"] == SILENT}
+    silent = {f["corpus_id"] for f in answer["unique_findings"] if f["claim_in_passage"] == SILENT}
     if not silent:
         return "both"
     if silent == {"A", "B"}:

@@ -7,7 +7,7 @@ QUERY = "How is time experienced by people?"
 
 def check(quote, chunk, query=QUERY, cid="B"):
     answer = ComposerAnswer(agreement="", disagreement="", unique_findings=[
-        CorpusFinding(corpus_id=cid, finding="f", quote=quote)])
+        CorpusFinding(corpus_id=cid, claim_in_passage="f", quote=quote)])
     return verify_quotes(answer, {cid: {"chunks": [chunk]}}, query)[cid]
 
 
@@ -162,7 +162,7 @@ def test_quote_missing_from_chunks_and_from_the_book_is_not_found(monkeypatch):
 
 def test_no_quote_has_no_flag():
     answer = ComposerAnswer(agreement="", disagreement="", unique_findings=[
-        CorpusFinding(corpus_id="A", finding="query content is absent", quote=None)])
+        CorpusFinding(corpus_id="A", claim_in_passage="query content is absent", quote=None)])
 
     details = verify_quotes(answer, {"A": {"chunks": ["anything"]}}, QUERY)
 

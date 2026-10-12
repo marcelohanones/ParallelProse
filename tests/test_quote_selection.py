@@ -9,7 +9,7 @@ BEST = "For the auditor is not called on to relieve, but only to grieve."
 
 def run(quote, query=QUERY, chunk=CHUNK, finding="the finding"):
     answer = ComposerAnswer(agreement="", disagreement="", unique_findings=[
-        CorpusFinding(corpus_id="A", finding=finding, quote=quote)])
+        CorpusFinding(corpus_id="A", claim_in_passage=finding, quote=quote)])
     return select_quotes(answer, {"A": {"chunks": [chunk]}}, query)
 
 
@@ -38,7 +38,7 @@ def test_a_quote_that_already_scores_highest_is_kept():
 def test_the_finding_is_not_changed_by_a_replacement():
     answer, _ = run("What sort of compassion is this for feigned and scenical passions?", finding="pity on stage")
 
-    assert answer.unique_findings[0].finding == "pity on stage"
+    assert answer.unique_findings[0].claim_in_passage == "pity on stage"
 
 
 def test_a_sentence_sharing_only_one_query_term_does_not_replace_the_quote():
@@ -51,7 +51,7 @@ def test_a_sentence_sharing_only_one_query_term_does_not_replace_the_quote():
 
 def test_a_book_without_a_quote_is_left_alone():
     answer = ComposerAnswer(agreement="", disagreement="", unique_findings=[
-        CorpusFinding(corpus_id="A", finding="query content is absent", quote=None)])
+        CorpusFinding(corpus_id="A", claim_in_passage="query content is absent", quote=None)])
 
     adjusted, selection = select_quotes(answer, {"A": {"chunks": [CHUNK]}}, QUERY)
 
@@ -61,8 +61,8 @@ def test_a_book_without_a_quote_is_left_alone():
 
 def test_a_non_target_book_keeps_the_composer_quote():
     answer = ComposerAnswer(agreement="", disagreement="", unique_findings=[
-        CorpusFinding(corpus_id="A", finding="f", quote="What sort of compassion is this for feigned and scenical passions?"),
-        CorpusFinding(corpus_id="B", finding="g", quote="The moon is pale.")])
+        CorpusFinding(corpus_id="A", claim_in_passage="f", quote="What sort of compassion is this for feigned and scenical passions?"),
+        CorpusFinding(corpus_id="B", claim_in_passage="g", quote="The moon is pale.")])
     adjusted, selection = select_quotes(answer, {"A": {"chunks": [CHUNK]}, "B": {"chunks": [CHUNK]}}, QUERY, books={"A"})
 
     assert adjusted.unique_findings[0].quote == BEST

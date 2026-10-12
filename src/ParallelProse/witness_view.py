@@ -30,12 +30,13 @@ def build_witness_view(consolidated_path: Path) -> Path:
                         "label": bite["retrieval"][cid]["label"],
                         "side_is_target": bite["side_is_target"][cid],
                         "lineage": bite["retrieval"][cid]["lineage"],
+                        "silence_cause": bite["retrieval"][cid]["silence_cause"],
                     },
                     "quote": quote,
                     "verification": bite["verification"][cid],
                     "quote_selection": bite["quote_selection"][cid],
                     "context_window": context_window(CATALOG[cid], quote) if quote else None,
-                    "finding": finding["finding"],
+                    "finding": finding["claim_in_passage"],
                 })
 
     out = consolidated_path.parent / f"witness_view_{project}_{session}.json"

@@ -16,12 +16,13 @@ BITE_EXTRA_KEYS = {"bite_id", "quote_selection", "side_is_target", "verified", "
 
 def fake_result():
     answer = ComposerAnswer(agreement="both", disagreement="none", unique_findings=[
-        CorpusFinding(corpus_id="A", finding="a", quote="qa"),
-        CorpusFinding(corpus_id="B", finding="query content is absent", quote=None),
+        CorpusFinding(corpus_id="A", claim_in_passage="a", quote="qa"),
+        CorpusFinding(corpus_id="B", claim_in_passage="query content is absent", quote=None),
     ])
     corpora = {
-        "A": {"chunks": ["some text qa more text"], "label": "ok", "reason": "fine", "lineage": []},
-        "B": {"chunks": None, "label": "silent", "reason": "absent", "lineage": []},
+        "A": {"chunks": ["some text qa more text"], "label": "ok", "reason": "fine", "lineage": [],
+             "silence_cause": None},
+        "B": {"chunks": None, "label": "silent", "reason": "absent", "lineage": [], "silence_cause": "absence"},
     }
     return {"answer": answer, "corpora": corpora}
 

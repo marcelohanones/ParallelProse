@@ -30,8 +30,10 @@ def test_one_record_per_book_per_query(tmp_path, monkeypatch):
     monkeypatch.setattr("ParallelProse.witness_view.context_window", lambda book, quote: None)
     consolidated = write_session(tmp_path, [
         bite("1.1a", "q1",
-             [{"corpus_id": "A", "finding": "fa", "quote": "qa"}, {"corpus_id": "B", "finding": "fb", "quote": "qb"}],
-             {"A": {"label": "ok", "lineage": []}, "B": {"label": "ok", "lineage": []}},
+             [{"corpus_id": "A", "claim_in_passage": "fa", "quote": "qa"},
+              {"corpus_id": "B", "claim_in_passage": "fb", "quote": "qb"}],
+             {"A": {"label": "ok", "lineage": [], "silence_cause": None},
+              "B": {"label": "ok", "lineage": [], "silence_cause": None}},
              {"A": None, "B": None},
              {"A": {"status": "verbatim"}, "B": {"status": "verbatim"}},
              {"A": {"replaced": False}, "B": {"replaced": False}},
@@ -50,8 +52,8 @@ def test_comparison_fields_never_appear_in_the_output(tmp_path, monkeypatch):
     monkeypatch.setattr("ParallelProse.witness_view.context_window", lambda book, quote: None)
     consolidated = write_session(tmp_path, [
         bite("1.1a", "q1",
-             [{"corpus_id": "A", "finding": "fa", "quote": "qa"}],
-             {"A": {"label": "ok", "lineage": []}}, {"A": None},
+             [{"corpus_id": "A", "claim_in_passage": "fa", "quote": "qa"}],
+             {"A": {"label": "ok", "lineage": [], "silence_cause": None}}, {"A": None},
              {"A": {"status": "verbatim"}}, {"A": {"replaced": False}}, {"A": "idA"}),
     ])
 
@@ -65,8 +67,8 @@ def test_a_silent_book_carries_no_quote_but_still_gets_a_record(tmp_path, monkey
     monkeypatch.setattr("ParallelProse.witness_view.context_window", lambda book, quote: None)
     consolidated = write_session(tmp_path, [
         bite("1.1a", "q1",
-             [{"corpus_id": "A", "finding": "query content is absent", "quote": None}],
-             {"A": {"label": "silent", "lineage": []}}, {"A": None},
+             [{"corpus_id": "A", "claim_in_passage": "query content is absent", "quote": None}],
+             {"A": {"label": "silent", "lineage": [], "silence_cause": "absence"}}, {"A": None},
              {"A": {"status": "no_quote"}}, {"A": {"replaced": False}}, {"A": "idA"}),
     ])
 
@@ -75,14 +77,15 @@ def test_a_silent_book_carries_no_quote_but_still_gets_a_record(tmp_path, monkey
     assert record["quote"] is None
     assert record["context_window"] is None
     assert record["finding"] == "query content is absent"
+    assert record["retrieval"]["silence_cause"] == "absence"
 
 
 def test_field_order_puts_quote_before_finding(tmp_path, monkeypatch):
     monkeypatch.setattr("ParallelProse.witness_view.context_window", lambda book, quote: None)
     consolidated = write_session(tmp_path, [
         bite("1.1a", "q1",
-             [{"corpus_id": "A", "finding": "fa", "quote": "qa"}],
-             {"A": {"label": "ok", "lineage": []}}, {"A": None},
+             [{"corpus_id": "A", "claim_in_passage": "fa", "quote": "qa"}],
+             {"A": {"label": "ok", "lineage": [], "silence_cause": None}}, {"A": None},
              {"A": {"status": "verbatim"}}, {"A": {"replaced": False}}, {"A": "idA"}),
     ])
 
@@ -96,8 +99,8 @@ def test_edition_and_query_code_travel_through(tmp_path, monkeypatch):
     monkeypatch.setattr("ParallelProse.witness_view.context_window", lambda book, quote: None)
     consolidated = write_session(tmp_path, [
         bite("2.3b", "a precise query",
-             [{"corpus_id": "A", "finding": "fa", "quote": "qa"}],
-             {"A": {"label": "ok", "lineage": [{"tool": "x"}]}}, {"A": True},
+             [{"corpus_id": "A", "claim_in_passage": "fa", "quote": "qa"}],
+             {"A": {"label": "ok", "lineage": [{"tool": "x"}], "silence_cause": None}}, {"A": True},
              {"A": {"status": "verbatim"}}, {"A": {"replaced": False}}, {"A": "idA"}),
     ])
 
@@ -105,5 +108,6 @@ def test_edition_and_query_code_travel_through(tmp_path, monkeypatch):
 
     assert record["query_code"] == "2.3b" and record["query"] == "a precise query"
     assert record["edition"] == {"title": "Book A", "translator": "T.A."}
-    assert record["retrieval"] == {"label": "ok", "side_is_target": True, "lineage": [{"tool": "x"}]}
+    assert record["retrieval"] == {"label": "ok", "side_is_target": True, "lineage": [{"tool": "x"}],
+                                   "silence_cause": None}
     assert record["bite_id"] == "idA"

@@ -35,6 +35,7 @@ class CorpusState(TypedDict):
     label: Literal["ok", "miss", "silent"] | None
     reason: str | None
     narrowed_query: str | None
+    silence_cause: Literal["adjacent_topic", "absence"] | None
 
 
 class ReflectionState(TypedDict):
@@ -51,12 +52,16 @@ class CorpusCritique(BaseModel):
     corpus_id: Literal["A", "B"] = Field(
         description="the id of the book this verdict is about, exactly as given in the context")
     label: Literal["ok", "miss", "silent"] = Field(
-        description="'ok' is when chunks support a real answer for this book. 'miss' is when the book probably addresses it, but retrieval didn't surface it (wrong words count as a miss). 'silent' is when the chunks show the book doesn't address it. Related material in other words points to a miss. Unrelated material points to silence. A narrowed retry that still comes back empty is the best evidence of silence. So, on the first look the default leans toward miss, and silent needs the evidence to stack up.")
+        description="'ok' means a chunk's own sentence already asserts the query's specific claim — not a theme you connect to it by your own reasoning. Before choosing 'ok', test it: does the chunk's own wording state this claim, or did you add a step (e.g. 'this passage is about X, and X could explain the query's Y') to bridge from what the chunk says to what the query asks? Any such added step disqualifies 'ok' — it means you are inferring the answer, not finding it. 'miss' is when the book probably addresses it in different words, worth a narrowed retry. 'silent' is when the chunks, read literally with no bridging inference, don't make this claim — whether unrelated, or merely adjacent (same general topic, different specific point, bridged only by your own inference). A narrowed retry that still comes back empty is the best evidence of silence. So, on the first look the default leans toward miss, and silent needs the evidence to stack up.")
     reason: str = Field(
-        description="This points the fact(s) that backs-up the choosing of a label. This is the factual proof of what triggers, justifies one label or another. It points that a chunk fully covers a query, or not , if not, that a narrowed_query has or hasn't already been tried, successfully or not.")
+        description="First state plainly whether the chunk's own words already assert the claim, or whether you had to add a connecting inference the chunk doesn't itself state — naming that inference if so (this signals the label should not be 'ok'). Then point to the fact(s) that back up the label: a chunk fully covers the query, or not; if not, whether a narrowed_query has already been tried, successfully or not.")
     narrowed_query: str | None = Field(
         default=None,
         description="Only used when label is 'miss'. It is a narrowed query that would resolve a specific factual doubt, if any. Leave null otherwise.",
+    )
+    silence_cause: Literal["adjacent_topic", "absence"] | None = Field(
+        default=None,
+        description="Only used when label is 'silent'. 'adjacent_topic' when the chunks show related material that doesn't make this specific claim (a near miss). 'absence' when nothing related was found at all. Leave null otherwise.",
     )
 
 
@@ -78,10 +83,13 @@ class PerBookCritique(BaseModel):
 class CorpusFinding(BaseModel):
     corpus_id: Literal["A", "B"] = Field(
         description="the id of the book this finding is about, exactly as given in the context")
-    finding: str = Field(
-        description="What this one book alone asserts about the query, restricted to whatever wasn't already pulled into the top-level agreement/disagreement. Or, if this book's label is 'silent', a direct statement that it doesn't address the query")
+    claim_in_passage: str = Field(
+        description="What this passage asserts, restricted to the form: when X, Y happens, because Z. If the passage states no cause, write that the cause is unstated — never supply one. Or, if this book's label is 'silent', a direct statement that it doesn't address the query.")
+    form: Literal["scene", "thesis", "confession", "diagnosis"] | None = Field(
+        default=None,
+        description="What kind of passage this is — null when label is 'silent' (no passage to classify).")
     quote: str | None = Field(default=None,
-                              description="An exact, verbatim excerpt that backs finding. Used only when label is 'miss' or 'ok', leave null if label is 'silent'.")
+                              description="An exact, verbatim excerpt that backs claim_in_passage. Used only when label is 'miss' or 'ok', leave null if label is 'silent'.")
 
 
 class ComposerAnswer(BaseModel):
@@ -133,6 +141,7 @@ async def retriever(state: ReflectionState):
                 "label": state["corpora"][corpus_id]["label"],
                 "reason": state["corpora"][corpus_id]["reason"],
                 "narrowed_query": None,
+                "silence_cause": state["corpora"][corpus_id]["silence_cause"],
             }
             continue
         result = await retrieval_agent.ainvoke(
@@ -178,7 +187,8 @@ async def retriever(state: ReflectionState):
             "lineage": state["corpora"][corpus_id]["lineage"] + lineage_dict,
             "narrowed_query": state["corpora"][corpus_id]["narrowed_query"],
             "label": state["corpora"][corpus_id]["label"],
-            "reason": state["corpora"][corpus_id]["reason"]
+            "reason": state["corpora"][corpus_id]["reason"],
+            "silence_cause": state["corpora"][corpus_id]["silence_cause"],
         }
     return {"corpora": corpora_updates}
 
@@ -223,7 +233,7 @@ def composer(state: ReflectionState):
         prompt = f"Given this context {context}, write a short (3-4 sentence) factual note on: {state['query']}"
     if kept:
         kept_text = "\n".join(
-            f'Corpus_id: {corpus_id} = Finding: {slot.finding} (quote: "{slot.quote}")'
+            f'Corpus_id: {corpus_id} = Finding: {slot.claim_in_passage} (quote: "{slot.quote}")'
             for corpus_id, slot in kept.items())
         fresh = [corpus_id for corpus_id in state["corpora"] if corpus_id not in kept]
         prompt += (f"\n\nunique_findings must still hold exactly one entry per book: {', '.join(state['corpora'])}. "
@@ -236,14 +246,16 @@ def composer(state: ReflectionState):
     structured_answer = llm_call.invoke(prompt)
     for slot in structured_answer.unique_findings:
         if slot.corpus_id in kept:
-            slot.finding = kept[slot.corpus_id].finding
+            slot.claim_in_passage = kept[slot.corpus_id].claim_in_passage
             slot.quote = kept[slot.corpus_id].quote
+            slot.form = kept[slot.corpus_id].form
     for corpus_id in state["corpora"]:
         if state["corpora"][corpus_id]["label"] == "silent":
             for slot in structured_answer.unique_findings:
                 if slot.corpus_id == corpus_id:
-                    slot.finding = "query content is absent"
+                    slot.claim_in_passage = "query content is absent"
                     slot.quote = None
+                    slot.form = None
     if len(silent) == len(state["corpora"]):
         structured_answer.agreement = "Neither book addresses the query."
         structured_answer.disagreement = "None."
@@ -277,7 +289,7 @@ def format_answer(answer: ComposerAnswer) -> str:
     """This function formats ComposerAnswer as a string to feed reflect's prompt."""
     header = f"""Agreement: {answer.agreement}\nDisagreement: {answer.disagreement} """
     body = "\n".join(
-        f"""Corpus_id: {slot.corpus_id} = Finding: {slot.finding} (already backed by this verbatim quote: "{slot.quote}")"""
+        f"""Corpus_id: {slot.corpus_id} = Finding: {slot.claim_in_passage} (already backed by this verbatim quote: "{slot.quote}")"""
         for slot in answer.unique_findings)
     return "\n\n".join([header, body])
 
@@ -322,21 +334,23 @@ def reflect(state: ReflectionState):
     # X - This section saves the Critique in a per-book structure.
     verdicts = {}
     for slot in per_book.corpora_critique:
+        if slot.label != "miss":
+            slot.narrowed_query = None
+        if slot.label != "silent":
+            slot.silence_cause = None
         if slot.corpus_id == "A":
-            if slot.label != "miss":
-                slot.narrowed_query = None
             verdicts["A"] = {"corpus_id": slot.corpus_id,
                              "label": slot.label,
                              "reason": slot.reason,
-                             "narrowed_query": slot.narrowed_query
+                             "narrowed_query": slot.narrowed_query,
+                             "silence_cause": slot.silence_cause,
                              }
         else:
-            if slot.label != "miss":
-                slot.narrowed_query = None
             verdicts["B"] = {"corpus_id": slot.corpus_id,
                              "label": slot.label,
                              "reason": slot.reason,
-                             "narrowed_query": slot.narrowed_query
+                             "narrowed_query": slot.narrowed_query,
+                             "silence_cause": slot.silence_cause,
                              }
 
     return {
@@ -348,14 +362,16 @@ def reflect(state: ReflectionState):
                 "lineage": state["corpora"]["A"]["lineage"],
                 "label": verdicts["A"]["label"],
                 "reason": verdicts["A"]["reason"],
-                "narrowed_query": verdicts["A"]["narrowed_query"]
+                "narrowed_query": verdicts["A"]["narrowed_query"],
+                "silence_cause": verdicts["A"]["silence_cause"],
             },
                 "B": {
                     "chunks": state["corpora"]["B"]["chunks"],
                     "lineage": state["corpora"]["B"]["lineage"],
                     "label": verdicts["B"]["label"],
                     "reason": verdicts["B"]["reason"],
-                    "narrowed_query": verdicts["B"]["narrowed_query"]
+                    "narrowed_query": verdicts["B"]["narrowed_query"],
+                    "silence_cause": verdicts["B"]["silence_cause"],
                 }
             }
     }
@@ -409,8 +425,10 @@ async def run_query(query: str) -> ReflectionState:
         "feedback": "",
         "iteration": 0,
         "corpora": {
-            "A": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None},
-            "B": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None},
+            "A": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None,
+                 "silence_cause": None},
+            "B": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None,
+                 "silence_cause": None},
         }
     }
     return await reflection_app.ainvoke(initial_state)
@@ -429,7 +447,7 @@ if __name__ == "__main__":
                 print(f"""_Agreement: {update["answer"].agreement[:width]}""")
                 print(f"""_Disagreement: {update["answer"].disagreement[:width]}\n""")
                 for slot in update["answer"].unique_findings:
-                    print(f"""_Findings: {slot.corpus_id} - {slot.finding[:width]}""")
+                    print(f"""_Findings: {slot.corpus_id} - {slot.claim_in_passage[:width]}""")
             if node == "reflect":
                 print(f"""_Feedback:  {update["feedback"][:width]}""")
                 print(f"""_Needs_revision: {update["needs_revision"]}\n""")
@@ -438,6 +456,7 @@ if __name__ == "__main__":
                     print(f"""  _Label: {update["corpora"][corpus_id]["label"]} """)
                     print(f"""    _Reason: {update["corpora"][corpus_id]["reason"]} """)
                     print(f"""      _Narrowed_query: {update["corpora"][corpus_id]["narrowed_query"]}""")
+                    print(f"""      _Silence_cause: {update["corpora"][corpus_id]["silence_cause"]}""")
                     for item in update["corpora"][corpus_id]["lineage"]:
                         print(
                             f"""       _It: {item["iteration"]}, Tool: {item["tool"]}, Forced: {item["forced_retriever"]}""")
@@ -467,8 +486,10 @@ if __name__ == "__main__":
             "feedback": "",
             "iteration": 0,
             "corpora": {
-                "A": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None},
-                "B": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None},
+                "A": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None,
+                     "silence_cause": None},
+                "B": {"chunks": None, "lineage": [], "narrowed_query": None, "label": None, "reason": None,
+                     "silence_cause": None},
             }
         }
         print(f"""________Query: {initial_state["query"]} >>>""")

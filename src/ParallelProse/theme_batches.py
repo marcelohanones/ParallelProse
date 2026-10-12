@@ -94,9 +94,26 @@ def side_is_target(answer: ComposerAnswer, side: str | None) -> dict[str, bool |
     return {f.corpus_id: None if side is None else f.corpus_id == side for f in answer.unique_findings}
 
 
-def retrieval_diagnostics(corpora: dict) -> dict[str, dict]:
-    """Per book, the label, reason and tool-call lineage the retrieval loop ended with for this query."""
-    return {cid: {"label": slot["label"], "reason": slot["reason"], "lineage": slot["lineage"]}
+def resolve_silence_cause(label: str, llm_cause: str | None, target: bool | None) -> str | None:
+    """The final cause behind a 'silent' label, with the deterministic twin fact overriding the LLM's own guess:
+    the critique has no visibility into side-tagging (run_query never receives it), so a book that is the
+    non-target side of a twin query is 'non_target_twin' regardless of what the LLM said. None for any other
+    label — a book that isn't silent has no silence to explain."""
+    if label != "silent":
+        return None
+    if target is False:
+        return "non_target_twin"
+    return llm_cause
+
+
+def retrieval_diagnostics(corpora: dict, side_target: dict[str, bool | None]) -> dict[str, dict]:
+    """Per book, the label, reason, tool-call lineage and resolved silence cause the retrieval loop ended with.
+    side_target.get(cid), not side_target[cid]: ComposerAnswer.unique_findings is only ever soft-guaranteed
+    ("one entry per book") by a Field description, not enforced by the schema, so a book missing from the
+    answer must not crash this — it just means the twin fact is unknown, not that the book is a non-target."""
+    return {cid: {"label": slot["label"], "reason": slot["reason"], "lineage": slot["lineage"],
+                 "silence_cause": resolve_silence_cause(slot["label"], slot["silence_cause"],
+                                                        side_target.get(cid))}
             for cid, slot in corpora.items()}
 
 
@@ -107,13 +124,14 @@ async def answer_query(query: str, side: str | None) -> tuple[ComposerAnswer, di
     answer, quote_selection = select_quotes(result["answer"], result["corpora"], query,
                                             books={side} if side else None)
     quote_details = verify_quotes(answer, result["corpora"], query)
+    side_target = side_is_target(result["answer"], side)
     extra = {
         "bite_id": {f.corpus_id: compute_bite_id(f.corpus_id, f.quote, query) for f in answer.unique_findings},
         "quote_selection": quote_selection,
-        "side_is_target": side_is_target(result["answer"], side),
+        "side_is_target": side_target,
         "verified": verified_flags(quote_details),
         "verification": quote_details,
-        "retrieval": retrieval_diagnostics(result["corpora"]),
+        "retrieval": retrieval_diagnostics(result["corpora"], side_target),
     }
     return answer, extra, result["corpora"]
 

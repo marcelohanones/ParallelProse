@@ -64,7 +64,7 @@ def faithfulness(record: dict) -> dict[str, dict]:
             results[cid] = {"claims": 0, "unsupported": [], "passed": False, "reason": "no quote to check against"}
             continue
         verdict = _judge(FaithfulnessVerdict, (
-            f"Finding: {finding['finding']}\n\nQuote: {finding['quote']}\n\n"
+            f"Finding: {finding['claim_in_passage']}\n\nQuote: {finding['quote']}\n\n"
             "Split the finding into its separate factual claims about what the book says. For each claim, decide "
             "whether the quote alone supports it. Judge only against the quote's words: not the rest of the book, "
             "not what you know about the author. A claim that generalizes, interprets or adds a cause beyond what "
@@ -97,7 +97,7 @@ def attribution(record: dict) -> dict[str, dict]:
             f"Passages {i}:\n" + ("\n---\n".join(record["chunks"][book]) or "(none)")
             for i, book in enumerate(order, 1))
         verdict = _judge(AttributionVerdict, (
-            f"{passages}\n\nFinding: {_without_author_names(finding['finding'])}\n\n"
+            f"{passages}\n\nFinding: {_without_author_names(finding['claim_in_passage'])}\n\n"
             "Which set of passages does this finding describe? Decide by the idea the finding states (its claim, its "
             "cause, its example), not by the words it uses: a word that appears in both sets is not evidence for "
             "both. Answer 1 or 2 if the idea is stated in one set. Answer both only if each set, read on its own, "
@@ -116,7 +116,7 @@ def judge_records(records: list[dict], out_dir: Path = EVAL_DIR) -> Path:
         findings = dict(_judged_findings(record))
         for cid in findings:
             rows.append({"id": record["id"], "book": cid, "query": record["query"],
-                         "finding": findings[cid]["finding"], "quote": findings[cid]["quote"],
+                         "finding": findings[cid]["claim_in_passage"], "quote": findings[cid]["quote"],
                          "faithfulness": faithful[cid], "attribution": attributed[cid],
                          "human_faithful": None, "human_source": None})
     out_dir.mkdir(parents=True, exist_ok=True)

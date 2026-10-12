@@ -7,8 +7,8 @@ def record():
     return {
         "id": "g01", "query": "q",
         "answer": {"unique_findings": [
-            {"corpus_id": "A", "finding": "Saint Augustine says sleep is pleasant; Augustine's world causes it.", "quote": "held down pleasantly"},
-            {"corpus_id": "B", "finding": "query content is absent", "quote": None},
+            {"corpus_id": "A", "claim_in_passage": "Saint Augustine says sleep is pleasant; Augustine's world causes it.", "quote": "held down pleasantly"},
+            {"corpus_id": "B", "claim_in_passage": "query content is absent", "quote": None},
         ]},
         "retrieval": {"A": {"label": "ok"}, "B": {"label": "silent"}},
         "chunks": {"A": ["the a passage"], "B": ["the b passage"]},

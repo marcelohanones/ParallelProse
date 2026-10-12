@@ -951,7 +951,7 @@ null-search registry is item 43's job. Verified end-to-end against the real book
 
 ### 41. `ok` defined, the false `ok` fixed, and `silent` split
 
-**Status: not started.** **What:** three steps, in order. Write down what `ok` asserts — that this book answers the
+**Status: partially done (2026-10-11) — the split landed, the false-`ok` fix did not.** **What:** three steps, in order. Write down what `ok` asserts — that this book answers the
 query, not that the query's subject appears in it — in `CorpusCritique.label`'s description (`agent.py:53`). Then fix
 the disagreement that measures: in the first full golden-set run, 6 of 32 labels disagree with the golden set, and
 every one of the 6 is a book expected `silent` and labelled `ok` (g07 B, g09 B, g10 B, g11 B, g13 A, g15 A). Then
@@ -963,9 +963,25 @@ before the split imports the error: of the 12 silent verdicts in the history, 9 
 twin. **Synergy:** feeds item 40, whose single-voice type is populated from genuine absence; independent of items
 36-39.
 
+**Built as / measured result:** the split (step 3) landed and works: `CorpusCritique` gains `silence_cause`
+(LLM-judged `adjacent_topic`/`absence`, only when `label == "silent"`), threaded through `CorpusState`, with
+`theme_batches.resolve_silence_cause` deterministically overriding to `non_target_twin` when
+`side_is_target[cid] is False` — the critique LLM has no access to twin-tagging (`run_query` never receives
+`side`), so this override has to live outside the graph. All six golden-set entries re-run against the real
+graph after the step-1 description rewrite: **zero flipped.** `g07`'s book B still labels `ok`, and the critique's
+own `reason` reveals why: the model builds (or, on a second, more directive prompt attempt, flatly misstates) a
+causal bridge from a passage about spectacle/alienation to "the heart is restless" that the passage does not
+state — a content misrepresentation, not a borderline relevance call a label description can fix. A second,
+more forceful rewrite (forcing the model to self-check for an added inferential step) was tried on `g07` alone
+and made it worse: the model's `reason` then claimed the passage "clearly articulates" the restlessness directly
+— false on its face. Stopped there rather than keep spending real calls on prompt iteration with diminishing
+signal; this reads as a `gpt-4o-mini`/temperature-0.5 capability limit, not a wording problem. The false-`ok` fix
+is left open; a revisit should try `temperature=0` on the critique call specifically, or a stronger model for
+that one call, before any more prompt rewriting. All of this was verified with real OpenAI calls, not mocks.
+
 ### 42. `claim_in_passage` and `form` in the composer's output
 
-**Status: not started.** **What:** `CorpusFinding.finding` (`agent.py:78`) becomes a claim restricted to what the
+**Status: done (2026-10-11).** **What:** `CorpusFinding.finding` (`agent.py:78`) becomes a claim restricted to what the
 passage asserts — when X, Y happens, because Z — with an explicit escape for a passage that states no Z, so the model
 marks it unstated instead of supplying one. A sibling `form` field classifies the passage itself: scene, thesis,
 confession, diagnosis, a closed list.
@@ -977,6 +993,12 @@ finding rests on a single case — and that is the side this change exists to po
 findings that should pass before the judge measures the result. `form` is the one abstraction inside the retrieved
 passage itself, and it ships without a metric. **Synergy:** this is the finding item 39 exports in its own block and
 the claim item 40's units are written against.
+
+**Built as:** renamed to `claim_in_passage` (matching the item's own title), confirmed with the user before
+touching ~8 files — `agent.py` (composer's "kept" reuse and silent-override blocks now also carry `form`
+through), `judges.py` and `one_sided.py` (internal dict-key reads), while `witness_view.py`'s and `judges.py`'s
+*external* outputs keep the key name `"finding"` unchanged, now reading from the renamed internal field. `form`
+is `None` exactly when there's no passage (`label == "silent"`), mirroring `quote`. 131/131 tests pass.
 
 ### 43. A falsification round
 
