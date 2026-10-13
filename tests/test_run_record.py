@@ -112,7 +112,7 @@ def test_write_run_record_keeps_requested_and_returned_models_apart(tmp_path):
     tracker = RoleUsageTracker()
     start(tracker, "r1", ["role:judge"])
     tracker.on_llm_end(llm_result(model="deepseek-flash"), run_id="r1")
-    configuration = {"judge": {"provider": "ChatDeepSeek", "model_requested": "deepseek-v4-pro",
+    configuration = {"judge": {"class": "ChatDeepSeek", "model_requested": "deepseek-v4-pro",
                                "temperature": 0}}
     when = datetime(2026, 10, 12, 12, 0, tzinfo=timezone.utc)
 
@@ -125,3 +125,16 @@ def test_write_run_record_keeps_requested_and_returned_models_apart(tmp_path):
     assert payload["meta"]["peak"] is False
     assert payload["meta"]["configuration"]["judge"]["model_requested"] == "deepseek-v4-pro"
     assert payload["meta"]["usage"]["roles"]["judge"]["models_returned"] == {"deepseek-flash": 1}
+
+
+def test_peak_is_absent_when_no_provider_bills_by_the_hour(tmp_path):
+    """An OpenAI-only run records no peak, even inside the window an hourly-priced provider would call peak."""
+    tracker = RoleUsageTracker()
+    start(tracker, "r1", ["role:judge"])
+    tracker.on_llm_end(llm_result(model="gpt-4o-2024-08-06"), run_id="r1")
+    configuration = {"judge": {"class": "ChatOpenAI", "model_requested": "gpt-4o", "temperature": 0}}
+
+    path = write_run_record({"id": "g01", "query": "q"}, tracker, configuration, prefix="test", out_dir=tmp_path,
+                            now=datetime(2026, 10, 12, 2, 0, tzinfo=timezone.utc))
+
+    assert json.loads(path.read_text())["meta"]["peak"] is None

@@ -141,6 +141,12 @@ def is_peak(when: datetime) -> bool:
     return 1 <= when.hour < 4 or 6 <= when.hour < 10
 
 
+def _hourly_pricing(configuration: dict) -> bool:
+    """Whether any configured role is billed by the hour. Only DeepSeek is, among the providers configured today, so
+    an OpenAI-only run records no `peak` at all rather than stamping a window that does not price it."""
+    return any((spec or {}).get("class") == "ChatDeepSeek" for spec in configuration.values())
+
+
 def write_run_record(record: dict, usage: RoleUsageTracker, configuration: dict, *, prefix: str = "run",
                      out_dir: Path = EVAL_DIR, now: datetime | None = None) -> Path:
     """The one committed writer: the record plus what produced it, so no run is model-anonymous again."""
@@ -149,7 +155,7 @@ def write_run_record(record: dict, usage: RoleUsageTracker, configuration: dict,
         **record,
         "meta": {
             "recorded_at": now.isoformat(timespec="seconds"),
-            "peak": is_peak(now),
+            "peak": is_peak(now) if _hourly_pricing(configuration) else None,
             "configuration": configuration,
             "usage": usage.as_dict(),
         },

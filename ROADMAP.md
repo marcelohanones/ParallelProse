@@ -1079,7 +1079,7 @@ been found); feeds item 40; takes the item-37 direction for book-level checks.
 
 ### 45. DeepSeek for the gpt-4o roles: the attribution judge first
 
-**Status: 45.1 done and validated 2026-10-13 on live runs that never touch DeepSeek; 45.2 written down; 45.3 gate passed 2026-10-13; 45.4 measured 2026-10-13 -- `deepseek-flash` is rejected for attribution under the bar as written (23/27, a new `neither` pattern); whether to re-base the bar, retry with a prompt variant, or drop the item is an open decision.**
+**Status: closed 2026-10-13 as interrupted -- the route stays on OpenAI.** 45.1 done and validated on live runs that never touch DeepSeek; 45.2 written down; 45.3 gate passed 2026-10-13; 45.4 measured 2026-10-13 -- `deepseek-flash` is rejected for attribution under the bar as written (23/27, a new `neither` pattern). Re-basing the bar is not what reopens the item: the decision taken on 2026-10-13 is that the judge seat is chosen on capability **inside OpenAI**, because the whole judge budget is under a dollar per 40-record run and the provider move therefore buys nothing worth its plumbing. Item 47 carries that; the rollback is recorded below.
 
 **What:** the recurring OpenAI cost sits in gpt-4o, so only what runs on gpt-4o moves — and only after the spend is
 attributed to a role by measurement rather than by estimate. Everything on gpt-4o-mini stays on OpenAI:
@@ -1161,6 +1161,8 @@ faithfulness's ~0.5k). Four units, each built in order:
 
 **Built as (45.4, 2026-10-13):** the per-judge client is in `judges.py` -- `PP_ATTRIBUTION_JUDGE_MODEL` picks the attribution judge's model (default `gpt-4o`, so the routine is unchanged), a `deepseek*` name builds `ChatDeepSeek` with thinking disabled, and `_judge` takes the client explicitly so each judge can move on its own; the run record separates `judge_faithfulness` from `judge_attribution`. **The gpt-4o baseline did not reproduce cleanly.** Three valid samples on the frozen 27 scored **26, 26, 25**: g05 A is always wrong, and g15 A flips to `B` in one of three runs at temperature 0, so the incumbent itself does not clear ">=26/27 in each of three repetitions". The alias still answers as `gpt-4o-2024-08-06`, so it is sampling, not a moved snapshot. The fourth sample never ran: the OpenAI account returned `429 insufficient_quota` -- **no credits remaining**, which also stops every routine gpt-4o-mini call until the account is topped up or the pipeline moves. **The DeepSeek judge was measured anyway, against the human labels:** `deepseek-flash` scored **23/27 in all three repetitions, identical errors** -- g08 A, g09 A, g09 B and g10 A, all judged `neither` where the human says `A` or `B`. It gets both hard cases the incumbent misses right (g05 A and g15 A), and introduces a new error *direction*: the prompt's "Answer neither if no set states it" escape is taken four times where gpt-4o never took it. It is deterministic across repetitions, unlike gpt-4o. Cost, from the 45.1 record: 172,985 input tokens per repetition (~6.4k per call, ~97% cache-hit on repetitions 2-3), ~$0.004 per repetition against ~$0.4 for gpt-4o. **Verdict: not adopted under the bar as written** -- the count fails and the four `neither` verdicts are a new pattern. The bar needs re-basing regardless, because its reference judge misses it; and the `neither` cluster is what to understand first, since that escape hatch is part of the prompt being measured, not a bug.
 
+**Rolled back as (2026-10-13):** the provider binding is gone; the instrument stays. **Removed:** the `deepseek*` branch and the `_judge_client` wrapper in `judges.py`, `langchain-deepseek` from `pyproject.toml` and `uv.lock` (re-resolved to 197 packages, package uninstalled from `.venv` so a lingering import fails loudly), and `DEEPSEEK_API_KEY` from `.env`. **Kept, because none of it is DeepSeek-specific:** `run_record.py`'s per-role tracker and writer, the `PP_ATTRIBUTION_JUDGE_MODEL` override, the two judge clients, `_judge(client, role, ...)`, and the `judge_faithfulness`/`judge_attribution` role split -- that split is what item 47 sweeps with, and deleting it would mean rebuilding it for the next measurement. **Corrected:** `write_run_record` stamped `peak` from DeepSeek's UTC window onto every record, including OpenAI-only runs, where no hourly price exists; `peak` is now `None` unless a configured role's class is `ChatDeepSeek` (`run_record.py:_hourly_pricing`), with a test asserting that an OpenAI run inside that same window still records `None`. **Not reverted:** 45.1 and 45.2 stay as committed -- the run record is the instrument that produced the 45.4 numbers and caught the `429`, and the invariant holds whatever provider runs.
+
 **Why:** measured. Attribution on gpt-4o costs about $0.019 per query against about $0.001 on `deepseek-flash`
 off-peak — a ~94% cut off-peak, ~88% at peak — and the judge's independence survives, because it grades headlines
 written by gpt-4o-mini. `deepseek-flash` is the only stable target: the 2026-09-10 announcement says "We're phasing
@@ -1195,9 +1197,37 @@ travels with the numbers this time.
 **Why:** the acceptance that closed item 44 was never measured in the configuration that serves queries, so the
 project's headline result rests on a setting nobody uses. This is a validity gap, not a cost question, and it is cheap
 to close. If the six hold on gpt-4o-mini, item 44 is confirmed as shipped and nothing follows. If they do not,
-`deepseek-flash` returns to the table **on capability, not on cost** — a stronger model at gpt-4o-mini's off-peak
-price — and then item 45's out-of-scope paragraph becomes the build list: non-strict with validation, and E split into
-two calls so the bias control holds by construction.
+a stronger model returns to the table **on capability, not on cost** — and item 47 is where it is picked, inside
+OpenAI. If no OpenAI tier holds the surface, item 45's out-of-scope paragraph is the build list for moving E:
+non-strict with validation, and E split into two calls so the bias control holds by construction.
+
+### 47. The judge seat on capability: which OpenAI model adjudicates
+
+**Status: open 2026-10-13, opened by item 45's closure.** **What:** choose each judge's model by measurement against
+hand labels rather than by price or inheritance, sweeping current OpenAI models over the frozen 27 attribution cases:
+`gpt-4o` (the incumbent), a same-faixa current-generation model (`gpt-4.1` or `gpt-5.6-terra`), and a cheap tier
+(`gpt-5.6-luna`, $0.10/$0.50) as the floor. The mechanism already exists: `PP_ATTRIBUTION_JUDGE_MODEL` picks the
+attribution judge's model and the run record separates `judge_faithfulness` from `judge_attribution`, so one sweep is
+one env var and one re-run.
+
+**Why:** item 45 asked which provider was cheaper, and the answer stopped mattering once the spend was attributed to a
+role. The whole judge budget is under a dollar per 40-record run -- ~37 attribution calls at ~6.4k tokens (~$0.59 on
+`gpt-4o`) plus ~86 faithfulness calls at ~0.5k (~$0.11) -- against a routine pipeline of ~$0.007 per query. At that
+price a cheaper model buys nothing worth a provider move, and a weaker one costs accuracy on every future evaluation.
+Three findings carry in: the `gpt-4o` incumbent **does not clear its own bar** (26, 26, 25 across three samples at
+temperature 0, with `g15 A` flipping), so the bar gets re-based before it can rank anything; `deepseek-flash` was the
+only deterministic candidate and its four errors were all one direction (`neither`), the kind that does not average
+out; and 27 cases cannot statistically separate judges whose error rates are 1/27 and 4/27.
+
+**The part that is not optional:** the label set has to be large enough to rank the candidates.
+`judges.judge_agreement` already measures agreement once the `human_faithful`/`human_source` fields are filled; what is
+missing is labels in the current `PairVerdict` (claim, sentence) form, since all 147 rows on disk predate that
+instrument (see the Backlog). Faithfulness has no human calibration on any model today -- which makes it the cheapest
+half to move on risk, and the one that cannot be swept at all until its pairs are labelled.
+
+**Constraint that survives every provider decision:** the self-judging invariant (`judges.py`'s module docstring). The
+composer and the picker share `gpt-4o-mini` today, so no judge may be `gpt-4o-mini`; if the routine roles move to
+another model, the set of legal judge models moves with them. The invariant decides that, never the price.
 
 ### Backlog (deferred, not dropped)
 

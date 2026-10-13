@@ -40,18 +40,8 @@ ATTRIBUTION_JUDGE_MODEL = os.getenv("PP_ATTRIBUTION_JUDGE_MODEL", JUDGE_MODEL)
 EVAL_DIR = DATA_DIR / "eval"
 
 
-def _judge_client(model: str):
-    """The client for one judge model. A DeepSeek model gets the DeepSeek client with thinking off: on this surface
-    thinking would void temperature, refuse the named tool_choice langchain sends, and demand reasoning_content back
-    (item 45.3's gate)."""
-    if model.startswith("deepseek"):
-        from langchain_deepseek import ChatDeepSeek
-        return ChatDeepSeek(model=model, temperature=0, extra_body={"thinking": {"type": "disabled"}})
-    return ChatOpenAI(model=model, temperature=0)
-
-
-judge_llm = _judge_client(JUDGE_MODEL)                      # faithfulness
-attribution_llm = _judge_client(ATTRIBUTION_JUDGE_MODEL)    # attribution, per judge (item 45.4)
+judge_llm = ChatOpenAI(model=JUDGE_MODEL, temperature=0)                      # faithfulness
+attribution_llm = ChatOpenAI(model=ATTRIBUTION_JUDGE_MODEL, temperature=0)    # attribution, per judge
 
 
 class PairVerdict(BaseModel):
