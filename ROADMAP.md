@@ -1079,7 +1079,7 @@ been found); feeds item 40; takes the item-37 direction for book-level checks.
 
 ### 45. DeepSeek for the gpt-4o roles: the attribution judge first
 
-**Status: 45.1 done and validated 2026-10-13 on live runs that never touch DeepSeek; 45.2-45.4 not started.**
+**Status: 45.1 done and validated 2026-10-13 on live runs that never touch DeepSeek; 45.2 written down; 45.3-45.4 not started.**
 
 **What:** the recurring OpenAI cost sits in gpt-4o, so only what runs on gpt-4o moves — and only after the spend is
 attributed to a role by measurement rather than by estimate. Everything on gpt-4o-mini stays on OpenAI:
@@ -1154,6 +1154,8 @@ faithfulness's ~0.5k). Four units, each built in order:
   reopens the bar rather than rejecting the judge.
 
 **Built as (45.1, 2026-10-13):** `src/ParallelProse/run_record.py` is the one committed writer. `RoleUsageTracker` buckets calls by the `role:<name>` tag and warns when a call carries none; **two role tags raise**, per the mechanics above, never resolve. `prompt_sha` hashes the batch shape `on_chat_model_start` really hands over — the unit test had passed a flat list, and the first live run exposed the difference as one sha for eight calls. `write_run_record` stamps `recorded_at`, `peak`, the per-role configuration (class, base_url, requested model, temperature) and, per role, calls, input/output tokens, cache reads under any service tier, returned models and prompt shas. The six call sites carry their tags (`retrieval_agent`, `composer`, `reflect`, `critique_e`, `sentence_picker`, `judge`); `run_query`/`answer_query`/`run_golden_query` thread the tracker, and `_judge` takes callbacks because the judges run outside the graph. `evaluation.configuration()` gains `critique_model`, `role_configuration()` reads the six roles off the live clients, `record_golden_entry(entry)` is the recording path, and `agent.py:22-23`'s seed comment now names both seeded clients. **Validated live, never touching DeepSeek:** a graph run recorded four roles with zero warnings (`data/eval/smoke45b_2026-10-13_221246_g01.json`), a direct `reflect` call recorded the fifth (192 in / 61 out), and a judge call recorded gpt-4o at 11,682 input / 4,992 cache-read tokens, returned `gpt-4o-2024-08-06` against the requested alias `gpt-4o`. The validation also caught a defect the tests did not: an `on_llm_end` with no start was counted without a warning; fixed. 161/161 tests pass. First measured number for 45.4: **~5.8k input tokens per attribution call, two calls per record, ~43% cache hits already.**
+
+**Built as (45.2, 2026-10-13):** the invariant is stated where it governs, not only here. `judges.py`'s module docstring carries the rule and its scope — faithfulness off the composer's and the picker's models, attribution off the composer's and free to share the picker's — and the critique client's comment in `agent.py` points at it. The scope is the part worth having: the defaults satisfy the invariant, but an env override can break it, since `PP_CRITIQUE_MODEL` moves the picker's surface, so pointing it at the judge model makes faithfulness grade sentences its own model selected. No behaviour changed and no test was added: the unit is the statement.
 
 **Why:** measured. Attribution on gpt-4o costs about $0.019 per query against about $0.001 on `deepseek-flash`
 off-peak — a ~94% cut off-peak, ~88% at peak — and the judge's independence survives, because it grades headlines

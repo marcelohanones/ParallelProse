@@ -3,8 +3,17 @@
 Faithfulness judges each (claim, sentence) pair on its own — one atomic claim against the verbatim sentence that
 states it — and a book passes only when every pair passes. Attribution judges the book's headline, the synthesis:
 which book's passages is it describing. Both judge a target record (evaluation.run_golden_entry), per book that was
-not labelled silent. The judge model is not the system's model (agent.py runs gpt-4o-mini), so the system never
-grades its own output. Neither judge is trusted until it agrees with hand labels: judge_records writes the verdicts
+not labelled silent.
+
+The self-judging invariant (roadmap item 45.2). A judge never runs on the same model as the role that produced what
+it grades. Faithfulness grades a (claim, sentence) pair: the claim comes from the composer and the sentence from the
+picker, so its model stays off both. Attribution grades the headline, which comes from the composer, so its model
+stays off the composer's — it may share the picker's, since the picker writes no headlines. The defaults satisfy it
+(composer = picker = gpt-4o-mini, judges = gpt-4o), and the env overrides can break it: `PP_CRITIQUE_MODEL` moves the
+picker's surface, so pointing it at the judge model makes faithfulness grade sentences its own model selected, and
+that measurement is self-judged. Item 45.1's run record is what would show it after the fact.
+
+Neither judge is trusted until it agrees with hand labels: judge_records writes the verdicts
 beside empty human fields, and judge_agreement measures the agreement once those fields are filled.
 """
 

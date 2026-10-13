@@ -28,7 +28,9 @@ llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5, **SEED_KWARGS)
 
 # The per-book verdict is a factual judgment, not prose, so it gets its own client: its temperature and model can be
 # set independently of the composer's. The env overrides exist for item 41's C control (temperature 0 / gpt-4o on
-# this call only); the defaults reproduce the behaviour before the control.
+# this call only); the defaults reproduce the behaviour before the control. Setting this to the judge model would
+# put the faithfulness judge on the picker's own model — the self-judging invariant (item 45.2) is in judges.py's
+# module docstring.
 CRITIQUE_MODEL = os.getenv("PP_CRITIQUE_MODEL", "gpt-4o-mini")
 CRITIQUE_TEMPERATURE = float(os.getenv("PP_CRITIQUE_TEMPERATURE", "0.5"))
 critique_llm = ChatOpenAI(model=CRITIQUE_MODEL, temperature=CRITIQUE_TEMPERATURE, **SEED_KWARGS)
