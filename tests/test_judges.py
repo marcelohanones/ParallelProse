@@ -20,7 +20,7 @@ def record():
 def stub_judge(monkeypatch, answer):
     prompts = []
 
-    def fake_judge(schema, prompt, callbacks=None):
+    def fake_judge(client, role, schema, prompt, callbacks=None):
         prompts.append(prompt)
         return answer(schema, prompt)
 

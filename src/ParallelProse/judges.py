@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import json
+import os
 import random
 import re
 from datetime import datetime
@@ -35,9 +36,22 @@ from ParallelProse.catalog import CATALOG, DATA_DIR
 from ParallelProse.survey import term_pattern
 
 JUDGE_MODEL = "gpt-4o"
+ATTRIBUTION_JUDGE_MODEL = os.getenv("PP_ATTRIBUTION_JUDGE_MODEL", JUDGE_MODEL)
 EVAL_DIR = DATA_DIR / "eval"
 
-judge_llm = ChatOpenAI(model=JUDGE_MODEL, temperature=0)
+
+def _judge_client(model: str):
+    """The client for one judge model. A DeepSeek model gets the DeepSeek client with thinking off: on this surface
+    thinking would void temperature, refuse the named tool_choice langchain sends, and demand reasoning_content back
+    (item 45.3's gate)."""
+    if model.startswith("deepseek"):
+        from langchain_deepseek import ChatDeepSeek
+        return ChatDeepSeek(model=model, temperature=0, extra_body={"thinking": {"type": "disabled"}})
+    return ChatOpenAI(model=model, temperature=0)
+
+
+judge_llm = _judge_client(JUDGE_MODEL)                      # faithfulness
+attribution_llm = _judge_client(ATTRIBUTION_JUDGE_MODEL)    # attribution, per judge (item 45.4)
 
 
 class PairVerdict(BaseModel):
@@ -50,13 +64,14 @@ class AttributionVerdict(BaseModel):
     reason: str
 
 
-def _judge(schema: type[BaseModel], prompt: str, callbacks=None) -> BaseModel:
+def _judge(client, role: str, schema: type[BaseModel], prompt: str, callbacks=None) -> BaseModel:
     """One judged call. The role tag lives here because the judges run outside the graph, where the graph's config
-    cannot reach them; callbacks carries the run's RoleUsageTracker (item 45.1)."""
-    config = {"tags": ["role:judge"]}
+    cannot reach them; callbacks carries the run's RoleUsageTracker (item 45.1). The client is explicit so each judge
+    can move provider on its own (item 45.4)."""
+    config = {"tags": [f"role:{role}"]}
     if callbacks:
         config["callbacks"] = callbacks
-    return judge_llm.with_structured_output(schema).invoke(prompt, config=config)
+    return client.with_structured_output(schema).invoke(prompt, config=config)
 
 
 def _judged_books(record: dict):
@@ -75,7 +90,7 @@ def faithfulness(record: dict, callbacks=None) -> dict[str, dict]:
         pairs = finding.get("pairs") or []
         unsupported = []
         for pair in pairs:
-            verdict = _judge(PairVerdict, (
+            verdict = _judge(judge_llm, "judge_faithfulness", PairVerdict, (
                 f"Claim: {pair['claim']}\n\nSentence: {pair['sentence']}\n\n"
                 "Does this sentence alone, read literally, state this claim? Judge only against the sentence's "
                 "words: not the rest of the book, not what you know about the author. A claim that generalizes, "
@@ -109,7 +124,7 @@ def attribution(record: dict, callbacks=None) -> dict[str, dict]:
         passages = "\n\n".join(
             f"Passages {i}:\n" + ("\n---\n".join(record["chunks"][book]) or "(none)")
             for i, book in enumerate(order, 1))
-        verdict = _judge(AttributionVerdict, (
+        verdict = _judge(attribution_llm, "judge_attribution", AttributionVerdict, (
             f"{passages}\n\nFinding: {_without_author_names(finding['headline'])}\n\n"
             "Which set of passages does this finding describe? Decide by the idea the finding states (its claim, its "
             "cause, its example), not by the words it uses: a word that appears in both sets is not evidence for "

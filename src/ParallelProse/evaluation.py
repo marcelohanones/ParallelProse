@@ -9,7 +9,7 @@ from langsmith import Client, aevaluate
 from pydantic import BaseModel, Field, ConfigDict, TypeAdapter, ValidationError, model_validator, field_validator
 from typing import TypedDict, Literal, Annotated
 from ParallelProse.catalog import CATALOG, DATA_DIR
-from ParallelProse.judges import attribution, faithfulness
+from ParallelProse.judges import ATTRIBUTION_JUDGE_MODEL, attribution, faithfulness
 from ParallelProse.quote_check import _content_terms, book_paragraphs, match_form
 from ParallelProse.run_record import RoleUsageTracker, write_run_record
 from ParallelProse.survey import term_pattern
@@ -369,7 +369,7 @@ def configuration() -> dict:
             splitters[f"{part}_chunk_size_{cid}"] = config.chunk_size
             splitters[f"{part}_overlap_{cid}"] = config.chunk_overlap
     return {**splitters, "system_model": llm.model_name, "critique_model": CRITIQUE_MODEL,
-            "judge_model": JUDGE_MODEL}
+            "judge_model": JUDGE_MODEL, "attribution_judge_model": ATTRIBUTION_JUDGE_MODEL}
 
 
 def _client_spec(client) -> dict:
@@ -384,10 +384,11 @@ def role_configuration() -> dict:
     still differ -- the same llm serves the retrieval agent, the composer and reflect -- which is why the role is a
     call-site tag and never an object property."""
     from ParallelProse.agent import critique_llm, llm
-    from ParallelProse.judges import judge_llm
+    from ParallelProse.judges import attribution_llm, judge_llm
 
     clients = {"retrieval_agent": llm, "composer": llm, "reflect": llm,
-               "critique_e": critique_llm, "sentence_picker": critique_llm, "judge": judge_llm}
+               "critique_e": critique_llm, "sentence_picker": critique_llm,
+               "judge_faithfulness": judge_llm, "judge_attribution": attribution_llm}
     return {role: _client_spec(client) for role, client in clients.items()}
 
 
