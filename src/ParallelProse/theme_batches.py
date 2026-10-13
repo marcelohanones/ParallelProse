@@ -11,7 +11,7 @@ from pathlib import Path
 from ParallelProse.agent import ComposerAnswer, run_query
 from ParallelProse.catalog import CATALOG, DATA_DIR
 from ParallelProse.consolidate_thesis import consolidate_thesis_file
-from ParallelProse.quote_check import match_form, select_quotes, verified_flags, verify_quotes
+from ParallelProse.quote_check import match_form, verified_flags, verify_quotes
 from ParallelProse.witness_view import build_witness_view
 
 PROJECT = "augustine_debord"
@@ -119,18 +119,18 @@ def retrieval_diagnostics(corpora: dict, side_target: dict[str, bool | None]) ->
 
 
 async def answer_query(query: str, side: str | None) -> tuple[ComposerAnswer, dict, dict]:
-    """One query through the pipeline: run the graph, pick each book's quote, verify it. Returns the final answer,
-    the bite's extra fields, and the final corpora (which still hold each book's retrieved chunks)."""
+    """One query through the pipeline: run the graph, verify every (claim, sentence) pair each book contributed.
+    Returns the final answer, the bite's extra fields, and the final corpora (which still hold each book's retrieved
+    chunks)."""
     result = await run_query(query)
-    answer, quote_selection = select_quotes(result["answer"], result["corpora"], query,
-                                            books={side} if side else None)
+    answer = result["answer"]
     quote_details = verify_quotes(answer, result["corpora"], query)
     side_target = side_is_target(result["corpora"], side)
     findings = {f.corpus_id: f for f in answer.unique_findings}
     extra = {
-        "bite_id": {cid: compute_bite_id(cid, findings[cid].quote if cid in findings else None, query)
+        "bite_id": {cid: [compute_bite_id(cid, pair.sentence, query)
+                          for pair in (findings[cid].pairs if cid in findings else [])]
                     for cid in result["corpora"]},
-        "quote_selection": quote_selection,
         "side_is_target": side_target,
         "verified": verified_flags(quote_details),
         "verification": quote_details,

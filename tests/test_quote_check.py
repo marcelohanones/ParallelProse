@@ -1,14 +1,14 @@
 from ParallelProse import quote_check as qc
-from ParallelProse.agent import ComposerAnswer, CorpusFinding
+from ParallelProse.agent import ComposerAnswer, CorpusFinding, SentenceClaim
 from ParallelProse.quote_check import normalize_text, verified_flags, verify_quotes
 
 QUERY = "How is time experienced by people?"
 
 
-def check(quote, chunk, query=QUERY, cid="B"):
+def check(sentence, chunk, query=QUERY, cid="B"):
     answer = ComposerAnswer(agreement="", disagreement="", unique_findings=[
-        CorpusFinding(corpus_id=cid, claim_in_passage="f", quote=quote)])
-    return verify_quotes(answer, {cid: {"chunks": [chunk]}}, query)[cid]
+        CorpusFinding(corpus_id=cid, headline="f", pairs=[SentenceClaim(claim="f", sentence=sentence)])])
+    return verify_quotes(answer, {cid: {"chunks": [chunk]}}, query)[cid][0]
 
 
 def test_soft_hyphen_at_a_line_break_does_not_break_a_match():
@@ -34,7 +34,7 @@ def test_quote_that_opens_a_longer_sentence_is_a_prefix_and_returns_the_full_sen
 
     assert detail["status"] == "prefix"
     assert detail["quote_full"] == "I begged chastity and continency, only not yet."
-    assert verified_flags({"B": detail}) == {"B": True}
+    assert verified_flags({"B": [detail]}) == {"B": True}
 
 
 def test_quote_inside_a_longer_sentence_is_a_fragment_with_the_full_sentence():
@@ -48,7 +48,7 @@ def test_quote_equal_to_the_query_is_rejected_as_an_echo():
     detail = check(QUERY, "some passage about time")
 
     assert detail["status"] == "echo_of_query"
-    assert verified_flags({"B": detail}) == {"B": False}
+    assert verified_flags({"B": [detail]}) == {"B": False}
 
 
 def test_bare_thesis_number_in_the_corpus_is_reported_as_its_own_status():
@@ -160,23 +160,36 @@ def test_quote_missing_from_chunks_and_from_the_book_is_not_found(monkeypatch):
     assert "similarity" in detail
 
 
-def test_a_book_the_composer_omitted_is_verified_as_no_quote():
+def test_a_book_the_composer_omitted_contributes_no_entries():
     answer = ComposerAnswer(agreement="", disagreement="", unique_findings=[])
 
     details = verify_quotes(answer, {"A": {"chunks": ["anything"]}, "B": {"chunks": ["anything"]}}, QUERY)
 
-    assert details == {"A": {"status": "no_quote"}, "B": {"status": "no_quote"}}
+    assert details == {"A": [], "B": []}
     assert verified_flags(details) == {"A": None, "B": None}
 
 
-def test_no_quote_has_no_flag():
+def test_a_finding_that_carries_no_pairs_has_no_flag():
     answer = ComposerAnswer(agreement="", disagreement="", unique_findings=[
-        CorpusFinding(corpus_id="A", claim_in_passage="query content is absent", quote=None)])
+        CorpusFinding(corpus_id="A", headline="query content is absent")])
 
     details = verify_quotes(answer, {"A": {"chunks": ["anything"]}}, QUERY)
 
-    assert details == {"A": {"status": "no_quote"}}
+    assert details == {"A": []}
     assert verified_flags(details) == {"A": None}
+
+
+def test_every_pair_gets_its_own_entry_in_order():
+    answer = ComposerAnswer(agreement="", disagreement="", unique_findings=[
+        CorpusFinding(corpus_id="B", headline="h", pairs=[
+            SentenceClaim(claim="c1", sentence="held down as in sleep."),
+            SentenceClaim(claim="c2", sentence="a second sentence."),
+        ])])
+
+    details = verify_quotes(answer, {"B": {"chunks": ["I was held down as in sleep: and more. a second sentence."]}},
+                            QUERY)
+
+    assert [entry["status"] for entry in details["B"]] == ["fragment", "verbatim"]
 
 
 def test_normalize_text_folds_case_and_whitespace():

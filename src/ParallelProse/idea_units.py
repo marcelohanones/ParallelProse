@@ -80,12 +80,12 @@ class IdeaUnit(BaseModel):
 
 
 def build_bites_index(project_dir: Path) -> dict[str, dict]:
-    """bite_id -> {"corpus_id", "quote"}, scanned from every witness_view_*.json under a project's sessions."""
+    """bite_id -> {"corpus_id", "sentence"}, scanned from every witness_view_*.json under a project's sessions."""
     index = {}
     for path in project_dir.glob("*/witness_view_*.json"):
         for record in json.loads(path.read_text())["records"]:
-            if record["quote"] is not None:
-                index[record["bite_id"]] = {"corpus_id": record["corpus_id"], "quote": record["quote"]}
+            if record["sentence"] is not None:
+                index[record["bite_id"]] = {"corpus_id": record["corpus_id"], "sentence": record["sentence"]}
     return index
 
 
@@ -100,7 +100,7 @@ def _anchoring_problems(unit: IdeaUnit, bites_index: dict[str, dict]) -> list[st
             continue
         entry = bites_index[bite_id]
         paragraphs, _ = book_paragraphs(CATALOG[entry["corpus_id"]])
-        if not any(_phrase_pattern(entry["quote"]).search(p) for p in paragraphs):
+        if not any(_phrase_pattern(entry["sentence"]).search(p) for p in paragraphs):
             problems.append(f"{unit.id}: anchoring bite {bite_id!r} not found in book {entry['corpus_id']}")
     return problems
 

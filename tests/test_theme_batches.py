@@ -4,7 +4,7 @@ import json
 import pytest
 
 from ParallelProse import theme_batches as tb
-from ParallelProse.agent import ComposerAnswer, CorpusFinding
+from ParallelProse.agent import ComposerAnswer, CorpusFinding, SentenceClaim
 
 BATCH = """Theme 1: Crowds and the gaze
 
@@ -24,8 +24,8 @@ Thesis 2.1: Both books tie experienced time to the self.
 
 def answer(text):
     return ComposerAnswer(agreement=text, disagreement="none", unique_findings=[
-        CorpusFinding(corpus_id="A", claim_in_passage="a", quote="qa"),
-        CorpusFinding(corpus_id="B", claim_in_passage="b", quote="qb"),
+        CorpusFinding(corpus_id="A", headline="a", pairs=[SentenceClaim(claim="a", sentence="qa")]),
+        CorpusFinding(corpus_id="B", headline="b", pairs=[SentenceClaim(claim="b", sentence="qb")]),
     ])
 
 
@@ -151,7 +151,7 @@ def test_bite_id_map_is_keyed_by_the_corpora_not_the_composer(tmp_path, monkeypa
 
     async def fake_run_query(query):
         return {"answer": ComposerAnswer(agreement="x", disagreement="x", unique_findings=[
-            CorpusFinding(corpus_id="A", claim_in_passage="a", quote="qa")]),
+            CorpusFinding(corpus_id="A", headline="a", pairs=[SentenceClaim(claim="a", sentence="qa")])]),
             "corpora": corpora_for()}
 
     monkeypatch.setattr(tb, "run_query", fake_run_query)
@@ -163,7 +163,8 @@ def test_bite_id_map_is_keyed_by_the_corpora_not_the_composer(tmp_path, monkeypa
     stored = json.loads(next(tmp_path.glob("augustine_debord/*/theme-01*/thesis-01.json")).read_text())
     bite = stored["bites"][0]
     assert set(bite["bite_id"]) == {"A", "B"}
-    assert bite["bite_id"]["B"] == tb.compute_bite_id("B", None, "a shared query")
+    assert bite["bite_id"]["A"] == [tb.compute_bite_id("A", "qa", "a shared query")]
+    assert bite["bite_id"]["B"] == []  # the composer omitted B, so it contributed no pair to id
 
 
 def test_slugify_is_ascii_hyphenated_and_capped():
@@ -222,7 +223,7 @@ def test_run_theme_batches_builds_the_session_tree(tmp_path, monkeypatch):
 def test_run_theme_batches_also_writes_the_witness_view(tmp_path, monkeypatch):
     monkeypatch.setattr(tb, "BATCHES_PATH", tmp_path)
     monkeypatch.setattr(tb, "QUERY_PAUSE_SECONDS", 0)
-    monkeypatch.setattr("ParallelProse.witness_view.context_window", lambda book, quote: None)
+    monkeypatch.setattr("ParallelProse.witness_view.book_passage", lambda book, quote: None)
 
     async def fake_run_query(query):
         return {"answer": answer(f"agree on {query[:10]}"), "corpora": corpora_for()}
@@ -242,6 +243,6 @@ def test_run_theme_batches_also_writes_the_witness_view(tmp_path, monkeypatch):
     assert record["query_code"] == "1.1a" and record["query"] == "a shared query"
     assert record["edition"]["translator"] == "Edward Bouverie Pusey"
     keys = list(record)
-    assert keys.index("quote") < keys.index("finding")
+    assert keys.index("sentence") < keys.index("claim")
     for forbidden in ("agreement", "disagreement", "needs_revision"):
         assert forbidden not in json.dumps(witness)

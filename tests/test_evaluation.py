@@ -5,19 +5,19 @@ import json
 import pytest
 
 from ParallelProse import theme_batches as tb
-from ParallelProse.agent import ComposerAnswer, CorpusFinding
+from ParallelProse.agent import ComposerAnswer, CorpusFinding, SentenceClaim
 from ParallelProse import evaluation as ev
 from ParallelProse.evaluation import (EVALUATORS, JUDGES, GoldenEntry, OkExpectation, anchor_hits,
                                       anchors_evaluator, golden_target, label_agreement, labels_evaluator,
                                       push_golden_set, run_experiment, run_golden_entry)
 
-BITE_EXTRA_KEYS = {"bite_id", "quote_selection", "side_is_target", "verified", "verification", "retrieval"}
+BITE_EXTRA_KEYS = {"bite_id", "side_is_target", "verified", "verification", "retrieval"}
 
 
 def fake_result():
     answer = ComposerAnswer(agreement="both", disagreement="none", unique_findings=[
-        CorpusFinding(corpus_id="A", claim_in_passage="a", quote="qa"),
-        CorpusFinding(corpus_id="B", claim_in_passage="query content is absent", quote=None),
+        CorpusFinding(corpus_id="A", headline="a", pairs=[SentenceClaim(claim="a", sentence="qa")]),
+        CorpusFinding(corpus_id="B", headline="query content is absent"),
     ])
     corpora = {
         "A": {"chunks": ["some text qa more text"], "label": "ok", "reason": "fine", "lineage": [],
@@ -50,6 +50,7 @@ def test_answer_query_returns_the_bite_extras_and_the_corpora(monkeypatch):
 
     assert set(extra) == BITE_EXTRA_KEYS
     assert extra["side_is_target"] == {"A": True, "B": False}
+    assert extra["verified"] == {"A": True, "B": None}  # B contributed no pair, so it has no flag
     assert corpora["A"]["chunks"] == ["some text qa more text"]
 
 

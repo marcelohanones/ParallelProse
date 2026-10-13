@@ -14,7 +14,7 @@ from ParallelProse.quote_check import _content_terms, book_paragraphs, match_for
 from ParallelProse.survey import term_pattern
 from ParallelProse.theme_batches import answer_query
 
-GOLDEN_SET_SIZE = 16
+GOLDEN_SET_SIZE = 40
 SCATTERED_MIN_DISTANCE = 5000  # characters: farther apart than one default parent chunk (4000)
 QUOTED_RUN = 4  # a query sharing this many consecutive words with an anchor quotes it
 LANGSMITH_METADATA = {"dataset_split"}  # keys LangSmith adds to an example's metadata, not ours to rebuild from
@@ -234,24 +234,24 @@ def _composition_problems(entries: list[GoldenEntry]) -> list[str]:
     a, b = sorted(CATALOG)
     pairs = Counter((entry.expected[a].label, entry.expected[b].label) for entry in entries)
     rows = [
-        ("both books ok", pairs["ok", "ok"], 6),
-        (f"{a} ok, {b} silent", pairs["ok", "silent"], 3),
-        (f"{a} silent, {b} ok", pairs["silent", "ok"], 3),
-        ("both books silent", pairs["silent", "silent"], 1),
-        ('"wording": "book"', sum(entry.wording == "book" for entry in entries), 5),
-        ('"wording": "paraphrase"', sum(entry.wording == "paraphrase" for entry in entries), 5),
-        ("known_failure", sum(entry.known_failure for entry in entries), 2),
-        ("distinct themes", len({entry.theme for entry in entries}), 8),
+        ("both books ok", pairs["ok", "ok"], 20),
+        (f"{a} ok, {b} silent", pairs["ok", "silent"], 8),
+        (f"{a} silent, {b} ok", pairs["silent", "ok"], 8),
+        ("both books silent", pairs["silent", "silent"], 4),
+        ('"wording": "book"', sum(entry.wording == "book" for entry in entries), 12),
+        ('"wording": "paraphrase"', sum(entry.wording == "paraphrase" for entry in entries), 12),
+        ("known_failure", sum(entry.known_failure for entry in entries), 4),
+        ("distinct themes", len({entry.theme for entry in entries}), 20),
     ]
     for cid in sorted(CATALOG):
         expectations = [(entry, entry.expected[cid]) for entry in entries]
         rows.append((f"{cid} silent with near_miss",
-                     sum(x.label == "silent" and x.near_miss for _, x in expectations), 1))
+                     sum(x.label == "silent" and x.near_miss for _, x in expectations), 2))
         for shape in ("single", "scattered"):
             for specificity in ("specific", "abstract"):
                 count = sum(x.label == "ok" and (len(x.anchors) > 1) == (shape == "scattered")
                             and entry.specificity == specificity for entry, x in expectations)
-                rows.append((f"{cid} ok {shape}/{specificity}", count, 2))
+                rows.append((f"{cid} ok {shape}/{specificity}", count, 4))
 
     problems = [f"set: {name} has {count}, needs at least {minimum}" for name, count, minimum in rows if
                 count < minimum]

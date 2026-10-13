@@ -5,8 +5,9 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from ParallelProse import agent as ag
-from ParallelProse.agent import (ComparisonCritique, ComposerAnswer, CorpusFinding,
-                                 EFirst, EFirstBatch, EPostVerdict, ESecond, ESecondBatch)
+from ParallelProse.agent import (ComparisonCritique, ComposerAnswer, ComposerDraft, CorpusFinding,
+                                 DraftFinding, EFirst, EFirstBatch, EPostVerdict, ESecond, ESecondBatch,
+                                 SentenceChoice, SentenceClaim)
 from ParallelProse.catalog import CATALOG
 
 
@@ -21,10 +22,20 @@ def reflection_state(corpora, answer="", iteration=1, needs_revision=False):
             "iteration": iteration, "corpora": corpora}
 
 
-def composer_answer(a_finding, a_quote, b_finding, b_quote, agreement="agree", disagreement="disagree"):
+def composer_answer(a_headline, a_sentence, b_headline, b_sentence, agreement="agree", disagreement="disagree"):
     return ComposerAnswer(agreement=agreement, disagreement=disagreement, unique_findings=[
-        CorpusFinding(corpus_id="A", claim_in_passage=a_finding, quote=a_quote),
-        CorpusFinding(corpus_id="B", claim_in_passage=b_finding, quote=b_quote),
+        CorpusFinding(corpus_id="A", headline=a_headline,
+                      pairs=[SentenceClaim(claim=a_headline, sentence=a_sentence)]),
+        CorpusFinding(corpus_id="B", headline=b_headline,
+                      pairs=[SentenceClaim(claim=b_headline, sentence=b_sentence)]),
+    ])
+
+
+def composer_draft(a_headline, a_claim, b_headline, b_claim, agreement="agree", disagreement="disagree"):
+    """The composer's draft: the headlines and the atomic claims — the sentences arrive from the picker."""
+    return ComposerDraft(agreement=agreement, disagreement=disagreement, unique_findings=[
+        DraftFinding(corpus_id="A", headline=a_headline, claims=[a_claim]),
+        DraftFinding(corpus_id="B", headline=b_headline, claims=[b_claim]),
     ])
 
 
@@ -116,13 +127,17 @@ def test_retriever_retries_a_miss_with_its_narrowed_query(monkeypatch):
 
 
 def test_composer_builds_findings_for_ok_books_only(monkeypatch):
-    fake = FakeLLM({ComposerAnswer: composer_answer("A fresh", "qa", "B ghost", "qb2")})
+    fake = FakeLLM({ComposerDraft: composer_draft("A fresh", "a claim", "B ghost", "b claim")})
     monkeypatch.setattr(ag, "llm", fake)
-    state = reflection_state({"A": corpus_slot("ok", chunks=["a"]), "B": corpus_slot("silent", chunks=["b"])})
+    picker = FakeLLM({SentenceChoice: SentenceChoice(sentence_index=1)})
+    monkeypatch.setattr(ag, "critique_llm", picker)
+    state = reflection_state({"A": corpus_slot("ok", chunks=["Only one sentence here."]),
+                              "B": corpus_slot("silent", chunks=["b"])})
 
     out = ag.composer(state)
 
     assert [slot.corpus_id for slot in out["answer"].unique_findings] == ["A"]
+    assert out["answer"].unique_findings[0].pairs[0].sentence == "Only one sentence here."
     assert out["answer"].agreement == (f"{CATALOG['B'].book_title} does not address the query, "
                                        "so there is no cross-book agreement.")
     assert out["answer"].disagreement == "None: only one book addresses the query."
@@ -317,3 +332,62 @@ def test_graph_places_e_before_composer_with_a_single_retry_branch():
     assert ("composer", "reflect", None) in edges
     assert ("reflect", "__end__", None) in edges
     assert not any("finalize" in (source, target) for source, target, _ in edges)
+
+
+def test_select_sentences_gives_one_sentence_to_one_claim(monkeypatch):
+    """A picker that answers the same sentence twice grounds one claim with it and leaves the other unpaired:
+    three claims resting on one sentence are not three grounded steps."""
+    answers = iter([SentenceChoice(sentence_index=1), SentenceChoice(sentence_index=1)])
+    monkeypatch.setattr(ag, "critique_llm", FakeLLM({SentenceChoice: next(answers)}))
+    draft = ComposerDraft(agreement="a", disagreement="d", unique_findings=[
+        DraftFinding(corpus_id="A", headline="h", claims=["first claim", "second claim"])])
+    corpora = {"A": {"chunks": ["Only one sentence here."]}}
+
+    answer = ag.select_sentences(draft, corpora)
+
+    finding = answer.unique_findings[0]
+    assert [p.claim for p in finding.pairs] == ["first claim"]
+    assert finding.pairs[0].sentence == "Only one sentence here."
+    assert finding.unpaired == ["second claim"]
+
+
+def test_select_sentences_keeps_a_claim_no_sentence_states(monkeypatch):
+    monkeypatch.setattr(ag, "critique_llm", FakeLLM({SentenceChoice: SentenceChoice(sentence_index=None)}))
+    draft = ComposerDraft(agreement="a", disagreement="d", unique_findings=[
+        DraftFinding(corpus_id="A", headline="h", claims=["a claim nothing states"])])
+    corpora = {"A": {"chunks": ["An unrelated sentence."]}}
+
+    finding = ag.select_sentences(draft, corpora).unique_findings[0]
+
+    assert finding.pairs == [] and finding.unpaired == ["a claim nothing states"]
+
+
+def test_e_first_retries_a_batch_that_omits_a_book(monkeypatch):
+    """A structured-output batch occasionally comes back one book short; the missing book is asked for again
+    rather than deleting its slot (the state invariant: returning corpora replaces the whole dict)."""
+    calls = []
+    a_only = EFirstBatch(verdicts=[EFirst(corpus_id="A", p_adjacent="no", p_answers="no", retry="no")])
+    b_only = EFirstBatch(verdicts=[EFirst(corpus_id="B", p_adjacent="no", p_answers="no", retry="no")])
+
+    def judge(query, corpora):
+        calls.append(query)
+        return a_only if len(calls) == 1 else b_only
+
+    monkeypatch.setattr(ag, "e_judge_first", judge)
+    state = reflection_state({"A": corpus_slot(None), "B": corpus_slot(None)})
+
+    out = ag.e_first(state)
+
+    assert len(calls) == 2
+    assert set(out["corpora"]) == {"A", "B"}
+    assert out["corpora"]["B"]["label"] == "silent"
+
+
+def test_e_first_names_a_book_its_batch_never_returns(monkeypatch):
+    """A book still absent after the retry fails loudly, naming it — never a bare KeyError, never a dropped slot."""
+    monkeypatch.setattr(ag, "e_judge_first", lambda query, corpora: EFirstBatch(
+        verdicts=[EFirst(corpus_id="A", p_adjacent="no", p_answers="no", retry="no")]))
+    state = reflection_state({"A": corpus_slot(None), "B": corpus_slot(None)})
+
+    with pytest.raises(ValueError, match="B"):
+        ag.e_first(state)

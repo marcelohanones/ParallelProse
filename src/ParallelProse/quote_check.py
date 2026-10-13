@@ -119,52 +119,68 @@ def context_window(book, quote: str, around: int = 1) -> str | None:
     return " ".join(sentences[lo:hi])
 
 
-def verify_quotes(answer: ComposerAnswer, corpora: dict, query: str) -> dict[str, dict]:
-    """Per book, how its quote relates to that book's retrieved chunks and, failing that, to the book itself.
-    `status` is one of: no_quote; echo_of_query (the quote is the query itself); verbatim (the quote is a whole
-    sentence the chunks contain); prefix (the quote opens a longer sentence; quote_full is that sentence as
-    written); fragment (the quote sits inside a longer sentence; quote_full is that sentence);
+def book_passage(book, quote: str) -> str | None:
+    """The paragraph of the book that contains the quote, as written — the evidence unit the quote anchors into.
+    None when no paragraph contains it (an echo, an invention, or a fuzzy number match). Locates the quote by
+    character span in the joined paragraph forms, for the reason context_window does: containment alone matches a
+    short quote everywhere in this text's over-split sentences."""
+    quote_form = match_form(quote, is_quote=True)
+    forms, starts = book_paragraphs(book)
+    idx = " ".join(forms).find(quote_form)
+    if idx == -1:
+        return None
+    return _book_raw_paragraphs(book)[bisect_right(starts, idx) - 1]
+
+
+def _sentence_status(sentence: str, cid: str, chunks: list[str], query_form: str) -> dict:
+    """How one pair's sentence relates to that book's retrieved chunks and, failing that, to the book itself."""
+    quote_form = match_form(sentence, is_quote=True)
+    windows = [(raw, match_form(raw, is_quote=True)) for chunk in chunks for raw in _windows(chunk)]
+    joined = " ".join(match_form(chunk) for chunk in chunks)
+    entry = {}
+    if quote_form == query_form:
+        entry["status"] = "echo_of_query"
+    elif quote_form in joined:
+        containing = [(raw, form) for raw, form in windows if quote_form in form]
+        if not containing:
+            entry["status"] = "verbatim"  # spans two chunks or more than two sentences: present, not one sentence
+        else:
+            raw, form = min(containing, key=lambda w: len(w[1]))
+            if form == quote_form:
+                entry["status"] = "verbatim"
+            else:
+                entry["status"] = "prefix" if form.startswith(quote_form) else "fragment"
+                entry["quote_full"] = raw
+    elif _without_bare_numbers(quote_form) in _without_bare_numbers(joined):
+        entry["status"] = "differs_only_by_corpus_numbers"
+    else:
+        paragraphs, _ = book_paragraphs(CATALOG[cid])
+        entry["status"] = "found_in_book" if quote_form in " ".join(paragraphs) else "not_found"
+    if entry["status"] in ("differs_only_by_corpus_numbers", "not_found"):
+        similarity, raw, form = _nearest(quote_form, windows)
+        entry.update(similarity=round(similarity, 3), nearest=raw, differences=_differences(quote_form, form))
+    return entry
+
+
+def verify_quotes(answer: ComposerAnswer, corpora: dict, query: str) -> dict[str, list[dict]]:
+    """Per book, one entry per (claim, sentence) pair, in order: how that pair's sentence relates to that book's
+    retrieved chunks and, failing that, to the book itself. An empty list means the book contributed no pair — a
+    silent book. Each entry's `status` is one of: echo_of_query (the sentence is the query itself); verbatim (the
+    sentence is a whole sentence the chunks contain); prefix (it opens a longer sentence; quote_full is that
+    sentence as written); fragment (it sits inside a longer sentence; quote_full is that sentence);
     differs_only_by_corpus_numbers (found once the corpus's bare thesis numbers are ignored); found_in_book (not
     in the retrieved chunks, but the book itself has it — a retrieval gap, not an invented quote); not_found (the
-    book does not contain it either). Failed quotes also carry similarity, nearest and differences."""
+    book does not contain it either). Failed sentences also carry similarity, nearest and differences."""
     query_form = match_form(query, is_quote=True)
     findings_by_cid = {f.corpus_id: f for f in answer.unique_findings}
     details = {}
     for cid in corpora:
         finding = findings_by_cid.get(cid)
-        if finding is None or finding.quote is None:
-            details[cid] = {"status": "no_quote"}
-            continue
-        quote_form = match_form(finding.quote, is_quote=True)
-        windows = [(raw, match_form(raw, is_quote=True)) for chunk in corpora[cid]["chunks"] for raw in _windows(chunk)]
-        joined = " ".join(match_form(chunk) for chunk in corpora[cid]["chunks"])
-        entry = {}
-        if quote_form == query_form:
-            entry["status"] = "echo_of_query"
-        elif quote_form in joined:
-            containing = [(raw, form) for raw, form in windows if quote_form in form]
-            if not containing:
-                entry["status"] = "verbatim"  # spans two chunks or more than two sentences: present, not one sentence
-            else:
-                raw, form = min(containing, key=lambda w: len(w[1]))
-                if form == quote_form:
-                    entry["status"] = "verbatim"
-                else:
-                    entry["status"] = "prefix" if form.startswith(quote_form) else "fragment"
-                    entry["quote_full"] = raw
-        elif _without_bare_numbers(quote_form) in _without_bare_numbers(joined):
-            entry["status"] = "differs_only_by_corpus_numbers"
-        else:
-            paragraphs, _ = book_paragraphs(CATALOG[cid])
-            entry["status"] = "found_in_book" if quote_form in " ".join(paragraphs) else "not_found"
-        if entry["status"] in ("differs_only_by_corpus_numbers", "not_found"):
-            similarity, raw, form = _nearest(quote_form, windows)
-            entry.update(similarity=round(similarity, 3), nearest=raw, differences=_differences(quote_form, form))
-        details[cid] = entry
+        details[cid] = [_sentence_status(pair.sentence, cid, corpora[cid]["chunks"], query_form)
+                        for pair in (finding.pairs if finding else [])]
     return details
 
 
-MIN_SHARED_TERMS = 2  # a replacement must share at least this many content terms with the query
 STOPWORDS = frozenset("""a an and are as at be been but by can could did do does for from had has have he her his how i if in
 into is it its me my no nor not of on or our she so than that the their them then there these they this those to too us
 was we were what when where which who whom why will with would you your""".split())
@@ -174,52 +190,8 @@ def _content_terms(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-z]+", normalize_text(text)) if len(w) > 2 and w not in STOPWORDS}
 
 
-def select_quotes(answer: ComposerAnswer, corpora: dict, query: str,
-                  books: set[str] | None = None) -> tuple[ComposerAnswer, dict[str, dict]]:
-    """Per book, the composer's quote is replaced by the sentence of that book's retrieved chunks that shares the most query terms,
-    when that sentence scores strictly higher. A term counts for more the rarer it is among the book's sentences. A quote that echoes
-    the query always loses its place, and the echo is never replaced by the query itself. Returns the adjusted answer and, per book,
-    whether a quote was replaced, with the composer's original quote as `llm_quote` and both scores. Only the books in `books`
-    are considered (None means all): a twin query's non-target book keeps the composer's quote."""
-    query_terms = _content_terms(query)
-    query_form = match_form(query, is_quote=True)
-    findings_by_cid = {f.corpus_id: f for f in answer.unique_findings}
-    selection, findings = {}, []
-    for cid in corpora:
-        finding = findings_by_cid.get(cid)
-        if finding is None or finding.quote is None or (books is not None and cid not in books):
-            selection[cid] = {"replaced": False}
-            if finding is not None:
-                findings.append(finding)
-            continue
-        sentences = [(s, _content_terms(s)) for chunk in corpora[cid]["chunks"]
-                     for s in re.split(r"(?<=[.!?;:])\s+", re.sub(r"\s+", " ", chunk).strip()) if s.strip()]
-        document_frequency = Counter(term for _, terms in sentences for term in terms)
-        count = len(sentences)
-
-        def score(terms: set[str]) -> float:
-            return sum(math.log((count + 1) / (document_frequency[t] + 1)) + 1 for t in query_terms if t in terms)
-
-        if match_form(finding.quote, is_quote=True) == query_form:
-            quote_score = -1.0  # an echo of the query loses to any real sentence
-        else:
-            quote_score = score(_content_terms(finding.quote))
-        best_sentence, best_score = "", 0.0
-        for sentence, terms in sentences:
-            if match_form(sentence, is_quote=True) == query_form or len(query_terms & terms) < MIN_SHARED_TERMS:
-                continue  # one shared word, even a rare one, is not enough to stand in for an answer
-            if score(terms) > best_score:
-                best_sentence, best_score = sentence, score(terms)
-        if best_sentence and best_score > quote_score:
-            selection[cid] = {"replaced": True, "llm_quote": finding.quote,
-                              "score": round(best_score, 3), "llm_score": round(quote_score, 3)}
-            findings.append(finding.model_copy(update={"quote": best_sentence}))
-        else:
-            selection[cid] = {"replaced": False, "score": round(quote_score, 3)}
-            findings.append(finding)
-    return answer.model_copy(update={"unique_findings": findings}), selection
-
-
-def verified_flags(details: dict[str, dict]) -> dict[str, bool | None]:
-    """The boolean kept for each bite: True when the quote is text the book contains (whole, prefix or fragment), None when there is no quote."""
-    return {cid: None if d["status"] == "no_quote" else d["status"] in VERIFIED_STATUSES for cid, d in details.items()}
+def verified_flags(details: dict[str, list[dict]]) -> dict[str, bool | None]:
+    """The boolean kept for each bite: True when every pair's sentence is text the book contains (whole, prefix or
+    fragment), False when at least one is not, None when the book contributed no pair."""
+    return {cid: (None if not entries else all(e["status"] in VERIFIED_STATUSES for e in entries))
+            for cid, entries in details.items()}

@@ -84,14 +84,14 @@ def test_build_bites_index_scans_every_witness_view_under_the_project(tmp_path):
     (session / "witness_view_augustine_debord_2026-01-01_0000.json").write_text(json.dumps({
         "session": "2026-01-01_0000", "project": "augustine_debord",
         "records": [
-            {"bite_id": "id1", "corpus_id": "A", "quote": "a real quote"},
-            {"bite_id": "id2", "corpus_id": "B", "quote": None},
+            {"bite_id": "id1", "corpus_id": "A", "sentence": "a real quote"},
+            {"bite_id": "id2", "corpus_id": "B", "sentence": None},
         ],
     }))
 
     index = build_bites_index(tmp_path)
 
-    assert index == {"id1": {"corpus_id": "A", "quote": "a real quote"}}
+    assert index == {"id1": {"corpus_id": "A", "sentence": "a real quote"}}
 
 
 def test_load_idea_units_rejects_an_unknown_anchoring_id(tmp_path):
@@ -102,13 +102,13 @@ def test_load_idea_units_rejects_an_unknown_anchoring_id(tmp_path):
         load_idea_units(path, bites_index={})
 
 
-def test_load_idea_units_rejects_a_quote_not_in_the_book(tmp_path, monkeypatch):
+def test_load_idea_units_rejects_a_sentence_not_in_the_book(tmp_path, monkeypatch):
     monkeypatch.setattr(iu, "book_paragraphs", lambda book: (["nothing like the quote at all"], [0]))
     path = tmp_path / "idea_units.json"
     path.write_text(json.dumps([convergence_unit(anchoring=["id1"])]))
 
     with pytest.raises(ValueError, match="not found in book"):
-        load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "quote": "a real quote"}})
+        load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "sentence": "a real quote"}})
 
 
 def test_load_idea_units_rejects_a_repeated_id(tmp_path, monkeypatch):
@@ -117,7 +117,7 @@ def test_load_idea_units_rejects_a_repeated_id(tmp_path, monkeypatch):
     path.write_text(json.dumps([convergence_unit(id="u01"), convergence_unit(id="u01")]))
 
     with pytest.raises(ValueError, match="id used 2 times"):
-        load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "quote": "a real quote"}})
+        load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "sentence": "a real quote"}})
 
 
 def test_load_idea_units_accepts_a_good_file_and_returns_no_flags(tmp_path, monkeypatch):
@@ -125,7 +125,7 @@ def test_load_idea_units_accepts_a_good_file_and_returns_no_flags(tmp_path, monk
     path = tmp_path / "idea_units.json"
     path.write_text(json.dumps([convergence_unit(anchoring=["id1"])]))
 
-    units, flags = load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "quote": "a real quote"}})
+    units, flags = load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "sentence": "a real quote"}})
 
     assert len(units) == 1 and flags == []
 
@@ -137,7 +137,7 @@ def test_a_one_sided_unit_borrowing_the_other_books_word_is_flagged_not_rejected
         anchoring=["id1"], mechanism_a="the spectacle governs this", mechanism_b="and so does Z")]))
 
     units, flags = load_idea_units(path, bites_index={
-        "id1": {"corpus_id": "A", "quote": "a real quote"}})
+        "id1": {"corpus_id": "A", "sentence": "a real quote"}})
 
     assert len(units) == 1
     assert len(flags) == 1 and "spectacle" in flags[0]
@@ -150,8 +150,8 @@ def test_a_genuinely_cross_book_unit_is_never_flagged(tmp_path, monkeypatch):
         anchoring=["id1", "id2"], mechanism_a="the spectacle governs this", mechanism_b="and the soul resists")]))
 
     units, flags = load_idea_units(path, bites_index={
-        "id1": {"corpus_id": "A", "quote": "a real quote"},
-        "id2": {"corpus_id": "B", "quote": "a real quote"},
+        "id1": {"corpus_id": "A", "sentence": "a real quote"},
+        "id2": {"corpus_id": "B", "sentence": "a real quote"},
     })
 
     assert flags == []
@@ -188,7 +188,7 @@ def test_load_idea_units_accepts_a_search_backed_promotion(tmp_path, monkeypatch
     path.write_text(json.dumps([convergence_unit(
         promotion={"decider": "me", "null_search_ref": "n01", "date": "2026-10-26"})]))
 
-    units, flags = load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "quote": "a real quote"}},
+    units, flags = load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "sentence": "a real quote"}},
                                    null_searches={"n01": null_search()})
 
     assert len(units) == 1 and flags == []
@@ -201,7 +201,7 @@ def test_load_idea_units_rejects_a_promotion_without_a_registry(tmp_path, monkey
         promotion={"decider": "me", "null_search_ref": "n01", "date": "2026-10-26"})]))
 
     with pytest.raises(ValueError, match="no null-search registry"):
-        load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "quote": "a real quote"}})
+        load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "sentence": "a real quote"}})
 
 
 def test_load_idea_units_rejects_an_unknown_null_search_ref(tmp_path, monkeypatch):
@@ -211,7 +211,7 @@ def test_load_idea_units_rejects_an_unknown_null_search_ref(tmp_path, monkeypatc
         promotion={"decider": "me", "null_search_ref": "n99", "date": "2026-10-26"})]))
 
     with pytest.raises(ValueError, match="unknown null_search_ref"):
-        load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "quote": "a real quote"}},
+        load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "sentence": "a real quote"}},
                         null_searches={"n01": null_search()})
 
 
@@ -222,5 +222,5 @@ def test_load_idea_units_rejects_a_null_search_run_against_another_side(tmp_path
         promotion={"decider": "me", "null_search_ref": "n01", "date": "2026-10-26"})]))
 
     with pytest.raises(ValueError, match="ran against side B"):
-        load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "quote": "a real quote"}},
+        load_idea_units(path, bites_index={"id1": {"corpus_id": "A", "sentence": "a real quote"}},
                         null_searches={"n01": null_search(side="B", corpus="B")})

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
 import json
 import os
+import re
 
 from ParallelProse.catalog import CATALOG
 from ParallelProse.mcp_tools import PORT, http_client, mcp, mcp_tools_as_langchain_tools
@@ -130,16 +131,58 @@ class EPostVerdict(BaseModel):
     ok: Literal["yes", "no"] | None
 
 
+class SentenceClaim(BaseModel):
+    claim: str = Field(
+        description="The proposition the sentence states — what this sentence says, in its own terms. Never a generalization from it, never a cause or a consequence the sentence does not state.")
+    sentence: str = Field(
+        description="An exact, verbatim sentence from the passage that states this claim. The passage is the evidence; this sentence is the step that carries this claim. Never the query itself: when the query's wording comes from the book, quote the sentence around it instead.")
+
+
 class CorpusFinding(BaseModel):
     corpus_id: Literal["A", "B"] = Field(
         description="the id of the book this finding is about, exactly as given in the context")
-    claim_in_passage: str = Field(
-        description="What this passage asserts, restricted to the form: when X, Y happens, because Z. If the passage states no cause, write that the cause is unstated — never supply one. Or, if this book's label is 'silent', a direct statement that it doesn't address the query.")
+    headline: str = Field(
+        description="This book's position on the query, in one or two sentences. Our summary of what the passage shows, not a claim any single sentence proves. If this book's label is 'silent', a direct statement that it doesn't address the query.")
     form: Literal["scene", "thesis", "confession", "diagnosis"] | None = Field(
         default=None,
         description="What kind of passage this is — null when label is 'silent' (no passage to classify).")
-    quote: str | None = Field(default=None,
-                              description="An exact, verbatim excerpt that backs claim_in_passage. Used only when label is 'miss' or 'ok', leave null if label is 'silent'.")
+    pairs: list[SentenceClaim] = Field(
+        default_factory=list,
+        description="One to five (claim, sentence) pairs: the grounded steps behind the headline. Empty when label is 'silent'. Each claim must be exactly what its own sentence states — if a sentence states no cause, the pair states no cause.")
+    unpaired: list[str] = Field(
+        default_factory=list,
+        description="Claims left without a sentence of their own by select_sentences — no single sentence states it, or the sentence it matched is already carrying another claim. Kept out of the pairs, never presented as evidence, and kept here so the gap stays visible.")
+
+
+class DraftFinding(BaseModel):
+    """The composer's draft for one book: its position and the atomic claims behind it — no sentences yet. The
+    sentences are chosen in a second pass (select_sentences): asking one call to invent the claims and attribute
+    them at once is what produced claims paired with sentences that state something else."""
+    corpus_id: Literal["A", "B"] = Field(
+        description="the id of the book this finding is about, exactly as given in the context")
+    headline: str = Field(
+        description="This book's position on the query, in one or two sentences. Our summary of what the passage shows, not a claim any single sentence proves. If this book's label is silent, a direct statement that it doesn't address the query.")
+    form: Literal["scene", "thesis", "confession", "diagnosis"] | None = Field(
+        default=None,
+        description="What kind of passage this is — null when label is silent (no passage to classify).")
+    claims: list[str] = Field(
+        default_factory=list,
+        description="One to five atomic claims the passage supports — each one a proposition a single sentence of the passage states, never a generalization, a cause or a consequence the passage leaves out. Empty when label is silent.")
+
+
+class ComposerDraft(BaseModel):
+    """Agreement Disagreement, plus each book's headline and its claims — the sentences are still to come."""
+    agreement: str = Field(
+        description="Agreement means what both books actually claim in common about the query. A substantive point they both assert — not just a subject both happen to touch on. ")
+    disagreement: str = Field(
+        description="A point where the books' claims conflict: both make a claim about the same specific point, and the claims contradict. Not a point where their subjects merely diverge.")
+    unique_findings: list[DraftFinding] = Field(
+        description="one entry per book that addresses the query (label ok); a book the graph marked silent gets no finding here.")
+
+
+class SentenceChoice(BaseModel):
+    sentence_index: int | None = Field(
+        description="1-based number of the single sentence that states this claim, from the numbered list given, or null when no single sentence states it")
 
 
 class ComposerAnswer(BaseModel):
@@ -264,6 +307,38 @@ def format_context(corpora: dict[str, CorpusState]) -> str:
 
 
 # MARK: COMPOSER
+def _sentences(chunks: list[str]) -> list[str]:
+    """The book's retrieved sentences, in order — the candidate list the picker chooses from."""
+    return [s for chunk in (chunks or [])
+            for s in re.split(r"(?<=[.!?;:])\s+", re.sub(r"\s+", " ", chunk).strip()) if s.strip()]
+
+
+def select_sentences(draft: ComposerDraft, corpora: dict) -> ComposerAnswer:
+    """The second pass: for every claim, one call asks which single sentence of that book states it, and the pair
+    carries that sentence verbatim. The task is selection, not generation — the shape that pairs 96% of claims
+    correctly, against the ~36% a one-shot composer managed. A claim no single sentence states is left out of the
+    pairs and kept in the finding's unpaired list."""
+    findings = []
+    for slot in draft.unique_findings:
+        sentences = _sentences(corpora[slot.corpus_id]["chunks"])
+        listing = "\n".join(f"[{i}] {s}" for i, s in enumerate(sentences, 1))
+        pairs, unpaired, used = [], [], set()
+        for claim in slot.claims:
+            choice = critique_llm.with_structured_output(SentenceChoice).invoke(
+                f"Claim: {claim}\n\nSentences from the book's retrieved passages:\n{listing}\n\n"
+                "Which single sentence states this claim? Judge by what the sentence means, not by shared words. "
+                "Answer with its number, or null if no single sentence states it.")
+            index = choice.sentence_index
+            if index is not None and 1 <= index <= len(sentences) and index not in used:
+                used.add(index)  # one sentence carries one claim: a reused sentence is not a second grounded step
+                pairs.append(SentenceClaim(claim=claim, sentence=sentences[index - 1]))
+            else:
+                unpaired.append(claim)
+        findings.append(CorpusFinding(corpus_id=slot.corpus_id, headline=slot.headline, form=slot.form,
+                                      pairs=pairs, unpaired=unpaired))
+    return ComposerAnswer(agreement=draft.agreement, disagreement=draft.disagreement, unique_findings=findings)
+
+
 def composer(state: ReflectionState):
     """Composes the answer from the books E left 'ok'. A silent book contributes no finding — the readers
     take their per-book record from E, not from here — and when fewer than two books answer, the
@@ -279,10 +354,13 @@ def composer(state: ReflectionState):
             f"""Corpus_id: {corpus_id} = {CATALOG[corpus_id].book_title}, Label: {state["corpora"][corpus_id]["label"]}, Era: {CATALOG[corpus_id].era}"""
             for corpus_id in state["corpora"])
         prompt = (f"Given this context {context}, the query {state['query']} and the book mapping {book_map}, "
-                  f"write a short (3-4 sentence) factual note on: {state['query']}")
-        answer = llm.with_structured_output(ComposerAnswer).invoke(prompt)
+                  f"write a short (3-4 sentence) factual note on: {state['query']}. For each book give its own "
+                  f"position as a headline and the atomic claims the passage supports; the sentences themselves "
+                  f"are chosen afterwards.")
+        draft = llm.with_structured_output(ComposerDraft).invoke(prompt)
         # a finding only exists for a book that answers: drop any the model wrote for a silent book
-        answer.unique_findings = [slot for slot in answer.unique_findings if slot.corpus_id in ok]
+        draft.unique_findings = [slot for slot in draft.unique_findings if slot.corpus_id in ok]
+        answer = select_sentences(draft, state["corpora"])
         if len(ok) == 1:
             silent_names = ", ".join(CATALOG[c].book_title for c in state["corpora"] if c not in ok)
             answer.agreement = f"{silent_names} does not address the query, so there is no cross-book agreement."
@@ -307,15 +385,6 @@ def format_attempts(corpora: dict[str, CorpusState]) -> str:
             )
         blocks.append(header + body)
     return "\n\n".join(blocks)
-
-
-def format_answer(answer: ComposerAnswer) -> str:
-    """This function formats ComposerAnswer as a string to feed reflect's prompt."""
-    header = f"""Agreement: {answer.agreement}\nDisagreement: {answer.disagreement} """
-    body = "\n".join(
-        f"""Corpus_id: {slot.corpus_id} = Finding: {slot.claim_in_passage} (already backed by this verbatim quote: "{slot.quote}")"""
-        for slot in answer.unique_findings)
-    return "\n\n".join([header, body])
 
 
 # MARK: E JUDGE
@@ -412,6 +481,23 @@ def e_record(verdict: EPostVerdict, retry_used: bool) -> dict:
 
 
 # MARK: E FIRST / SECOND NODES (item 44.3)
+def _verdicts_for_every_book(state: ReflectionState, judge) -> list:
+    """E's batch, retried once for any book it left out. A structured-output batch occasionally comes back one
+    book short, and a missing verdict would delete that book's slot downstream (the state invariant: returning
+    corpora replaces the whole dict) — so the missing books are asked for again, once, and a book still absent
+    after the retry raises a message that names it instead of a bare KeyError."""
+    verdicts = list(judge(state["query"], state["corpora"]).verdicts)
+    missing = [cid for cid in state["corpora"] if cid not in {v.corpus_id for v in verdicts}]
+    if missing:
+        retry = judge(state["query"], state["corpora"])
+        seen = {v.corpus_id for v in verdicts}
+        verdicts += [v for v in retry.verdicts if v.corpus_id not in seen]
+        still = [cid for cid in state["corpora"] if cid not in {v.corpus_id for v in verdicts}]
+        if still:
+            raise ValueError(f"E returned no verdict for {', '.join(sorted(still))} after a retry")
+    return verdicts
+
+
 def _e_records(state: ReflectionState, raw_verdicts) -> dict:
     """The deterministic tail both E looks share: postprocess_e every raw verdict, then e_record turns
     each one into the canonical per-book slot. Every book in state["corpora"] gets a slot — the state
@@ -439,16 +525,14 @@ def e_first(state: ReflectionState) -> dict:
     """E's first look as its own graph node: one evidence-only call over both books — query, chunks
     and lineage, never the composer's draft — then the deterministic tail turns each raw verdict into
     the canonical per-book record. The comparison critique stays out of this node."""
-    first = e_judge_first(state["query"], state["corpora"])
-    return {"corpora": _e_records(state, first.verdicts)}
+    return {"corpora": _e_records(state, _verdicts_for_every_book(state, e_judge_first))}
 
 
 def e_second(state: ReflectionState) -> dict:
     """E's retry look: the same evidence-only judgment as e_first, but ESecond's schema carries no retry
     or narrowed_query, so this look only decides ok or silent. Every record is final after this node, and
     retry_used is true on a book whose prior look was 'miss'."""
-    second = e_judge_second(state["query"], state["corpora"])
-    return {"corpora": _e_records(state, second.verdicts)}
+    return {"corpora": _e_records(state, _verdicts_for_every_book(state, e_judge_second))}
 
 
 # MARK: REFLECT
@@ -535,7 +619,7 @@ if __name__ == "__main__":
                 print(f"""_Agreement: {update["answer"].agreement[:width]}""")
                 print(f"""_Disagreement: {update["answer"].disagreement[:width]}\n""")
                 for slot in update["answer"].unique_findings:
-                    print(f"""_Findings: {slot.corpus_id} - {slot.claim_in_passage[:width]}""")
+                    print(f"""_Findings: {slot.corpus_id} - {slot.headline[:width]} ({len(slot.pairs)} pairs)""")
             if node == "reflect":
                 print(f"""_Feedback:  {update["feedback"][:width]}""")
                 print(f"""_Needs_revision: {update["needs_revision"]}\n""")
