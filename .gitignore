@@ -24,3 +24,6 @@ src/ParallelProse/temp.py
 
 # IDEs
 .idea/
+
+# Harness-local instruction overlay (symlink into ~/.claude; machine-specific)
+AGENTS.local.md
