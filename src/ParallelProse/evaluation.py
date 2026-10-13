@@ -11,6 +11,7 @@ from typing import TypedDict, Literal, Annotated
 from ParallelProse.catalog import CATALOG, DATA_DIR
 from ParallelProse.judges import attribution, faithfulness
 from ParallelProse.quote_check import _content_terms, book_paragraphs, match_form
+from ParallelProse.run_record import RoleUsageTracker, write_run_record
 from ParallelProse.survey import term_pattern
 from ParallelProse.theme_batches import answer_query
 
@@ -260,11 +261,11 @@ def _composition_problems(entries: list[GoldenEntry]) -> list[str]:
     return problems
 
 
-async def run_golden_query(entry_id: str, query: str, side: str | None) -> dict:
+async def run_golden_query(entry_id: str, query: str, side: str | None, callbacks=None) -> dict:
     """One golden query through the same pipeline the batch runs use. Returns a bite's shape plus the entry's id and
     each book's retrieved chunks, which the anchor check reads and a bite drops. Takes the three fields the run needs
     rather than a whole entry, so LangSmith's target can call it with an example's inputs alone."""
-    answer, extra, corpora = await answer_query(query, side)
+    answer, extra, corpora = await answer_query(query, side, callbacks=callbacks)
     return {
         "id": entry_id,
         "query": query,
@@ -358,7 +359,7 @@ JUDGES = [faithfulness_evaluator, attribution_evaluator]      # one judge-model 
 def configuration() -> dict:
     """What the live objects are set to, read rather than typed, so an experiment's record cannot disagree with the
     code that produced it. Scores move with the chunk sizes and with either model, so all of them belong here."""
-    from ParallelProse.agent import llm                 # imported here: both open stores / clients at import time
+    from ParallelProse.agent import CRITIQUE_MODEL, llm  # imported here: both open stores / clients at import time
     from ParallelProse.judges import JUDGE_MODEL
     from ParallelProse.mcp_tools import REGISTRY
 
@@ -367,7 +368,36 @@ def configuration() -> dict:
         for part, config in (("child", retrieval.child_config), ("parent", retrieval.parent_config)):
             splitters[f"{part}_chunk_size_{cid}"] = config.chunk_size
             splitters[f"{part}_overlap_{cid}"] = config.chunk_overlap
-    return {**splitters, "system_model": llm.model_name, "judge_model": JUDGE_MODEL}
+    return {**splitters, "system_model": llm.model_name, "critique_model": CRITIQUE_MODEL,
+            "judge_model": JUDGE_MODEL}
+
+
+def _client_spec(client) -> dict:
+    """A live client's own settings -- the requested side of the model pair the record keeps apart."""
+    base_url = getattr(client, "openai_api_base", None) or getattr(client, "api_base", None) or ""
+    return {"class": type(client).__name__, "base_url": str(base_url),
+            "model_requested": client.model_name, "temperature": client.temperature}
+
+
+def role_configuration() -> dict:
+    """Per-role provider, model and temperature, read from the live clients (item 45.1). Roles sharing one client
+    still differ -- the same llm serves the retrieval agent, the composer and reflect -- which is why the role is a
+    call-site tag and never an object property."""
+    from ParallelProse.agent import critique_llm, llm
+    from ParallelProse.judges import judge_llm
+
+    clients = {"retrieval_agent": llm, "composer": llm, "reflect": llm,
+               "critique_e": critique_llm, "sentence_picker": critique_llm, "judge": judge_llm}
+    return {role: _client_spec(client) for role, client in clients.items()}
+
+
+async def record_golden_entry(entry: GoldenEntry, *, out_dir: Path | None = None, prefix: str = "run") -> Path:
+    """One golden entry through the live graph, written with what produced it -- the item 45.1 recorder. out_dir
+    defaults to data/eval inside write_run_record; a test can send the record elsewhere."""
+    tracker = RoleUsageTracker()
+    record = await run_golden_query(entry.id, entry.query, entry.side, callbacks=[tracker])
+    writer_kwargs = {"out_dir": out_dir} if out_dir is not None else {}
+    return write_run_record(record, tracker, role_configuration(), prefix=prefix, **writer_kwargs)
 
 
 async def run_experiment(entries: list[GoldenEntry], *, judges: bool = False, repetitions: int = 3,

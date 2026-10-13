@@ -27,7 +27,10 @@
   it too. Items 36-43, next up, are the handoff between this system and the side that writes the queries and the
   ideas: bite identity, verification against the book, the witness-view export, a rejectable standard for idea units,
   the `ok` and `silent` labels, and a falsification round; item 41 closed 2026-10-11 with the `silent` split landed
-  and the false `ok` diagnosed as a task problem, and item 44 carries that fix. See "v4 — after v3 is complete" below.
+  and the false `ok` diagnosed as a task problem, and item 44 carries that fix. Items 45-46 are instrumentation and
+cost: a run record that states which model ran which role, the one gpt-4o role whose spend justifies moving to
+DeepSeek (the attribution judge), and E re-measured in the configuration it actually runs in. See "v4 — after v3 is
+complete" below.
 - **RAG-Tetris** — a separate future project (comparing code across versions), out of scope here.
 
 Suggested build order below follows dependency, not memory-entry order: state shape and the merge come first because
@@ -1074,7 +1077,140 @@ evidence-only judgment and the retry signal, with `P` keeping the adjacent mater
 and item 39's silent witness read. **Synergy:** unblocks item 43 (a false `ok` reads as the counter-example having
 been found); feeds item 40; takes the item-37 direction for book-level checks.
 
+### 45. DeepSeek for the gpt-4o roles: the attribution judge first
+
+**Status: 45.1 done and validated 2026-10-13 on live runs that never touch DeepSeek; 45.2-45.4 not started.**
+
+**What:** the recurring OpenAI cost sits in gpt-4o, so only what runs on gpt-4o moves — and only after the spend is
+attributed to a role by measurement rather than by estimate. Everything on gpt-4o-mini stays on OpenAI:
+`deepseek-flash` matches gpt-4o-mini's list price off-peak and costs double at peak, so there is nothing to save
+there. Embeddings stay on OpenAI too — DeepSeek has no embeddings endpoint, re-embedding the whole index costs about
+$0.004, and swapping the model would move retrieval and invalidate the golden set for no saving. That narrows the
+migration to the evaluation judges, and inside them to **attribution** (~7k input tokens per query against
+faithfulness's ~0.5k). Four units, each built in order:
+
+- **45.1 The run record per role** — one committed writer for the run JSONs in `data/eval`, carrying provider, the
+  model **requested and the model returned**, temperature per role (composer, critique, judge), the `sha256` of each
+  prompt text, `usage_metadata` including `prompt_cache_hit_tokens`, and the wall-clock time (peak and off-peak are
+  half-price apart). `evaluation.configuration()` gains `critique_model`, which it does not record today, and
+  `agent.py:22-23`'s seed comment is corrected — `SEED_KWARGS` reaches `critique_llm` too, not only the retrieval
+  agent and the composer. **Validated on a run that does not touch DeepSeek** — re-record an existing entry and check
+  the fields — so the recorder is not carrying the migration's evidence before it is itself proven. Today the only
+  committed writer under `data/eval` is `judges.judge_records`; every run JSON (`seed44`, `set40`, `afterC2`,
+  `c_control`) came from ad-hoc code and records no model at all, which is why the gpt-4o/gpt-4o-mini split could not
+  be read off the artifacts and why the 25/27-vs-26/27 attribution confusion was possible.
+  **How usage is attributed to a role.** `langchain_core`'s `UsageMetadataCallbackHandler` cannot do it: it keys its
+  accumulator on the model name (`callbacks/usage.py:58-74`), and in routine runs the composer and the critique share
+  gpt-4o-mini, so their tokens land in one bucket. Instead, one small `BaseCallbackHandler` that buckets by a
+  **per-role tag**, correlating `on_chat_model_start` to `on_llm_end` by `run_id`, **instantiated per run and passed
+  through config** — never a module-level accumulator, since `run_experiment` runs at `max_concurrency=2` and a shared
+  one would blend two examples. Five mechanics, each one a trap already located:
+  - **Read the role tag by prefix, never by position.** LangChain injects its own tags (`seq:step:N`,
+    `runnables/base.py:3438`), so the handler searches the list for `role:`. Two `role:` tags on one call — a parent's
+    and an object's — is **ambiguous and must raise**, not be silently resolved to the first.
+  - **Tag per invocation, never on the client object.** The same `llm` serves the retrieval agent (`agent.py:215`) and
+    the composer and `reflect` (`agent.py:360`, `:552`), so an object-level tag would fuse three roles into one; and
+    `create_agent` types `model: str | BaseChatModel` (`langchain/agents/factory.py:769`), which the `RunnableBinding`
+    that `with_config` returns is not.
+  - **The returned model and the requested model are different fields, and taking the wrong one voids the whole
+    point.** The returned one is `generations[0][0].message.response_metadata["model_name"]`, filled from the API's own
+    `response_dict["model"]` (`langchain_openai/chat_models/base.py:1876`). The requested one is
+    `response.llm_output["model_name"]`, which `_combine_llm_outputs` sets from `self.model_name`
+    (`base.py:1404`). Record both, from those two fields — that pair is exactly what catches a `deepseek-v4-pro`
+    request served as Flash, or a moved `gpt-4o` snapshot.
+  - **Cache hits read the same way on both providers**, through `usage_metadata["input_token_details"]`: langchain-openai
+    maps `prompt_tokens_details.cached_tokens` and `ChatDeepSeek` maps `prompt_cache_hit_tokens`. One caveat in that
+    mapping — the key is **prefixed by service tier when one is present** (`f"{service_tier_prefix}cache_read"`,
+    `base.py:4190`), so match a key *ending* in `cache_read` rather than hard-coding `"cache_read"`.
+  - **Two collection points, because the judges are not in the graph.** `attribution_evaluator` calls
+    `judges.attribution(record)` directly (`evaluation.py:349-351`), outside any config `run_query` received — and that
+    is precisely the role this unit exists to size. So the handler is also passed explicitly into
+    `attribution()` / `faithfulness()` (or into `judges._judge`), not only through the graph's config. In sequential
+    local runs the two points coincide; under `aevaluate` they do not.
+- **45.2 The self-judging invariant, written down** — the **faithfulness** judge never on the same model as the
+  **composer** nor the **picker** (its claim comes from the composer, its sentence from the picker); the
+  **attribution** judge never on the same model as the **composer** (it judges headlines). Satisfied today (composer =
+  picker = gpt-4o-mini, judges = gpt-4o), so this unit is the statement, not a change — and it is what decides, later,
+  whether a judge may follow the composer through a provider swap.
+- **45.3 DeepSeek access and the two-round smoke test** — the client plus `DEEPSEEK_API_KEY`, then the schemas against
+  the live API. Round 1 sends them as langchain builds them; round 2 sends the strict schema built here. Gate for 45.4:
+  both judge schemas accepted, `parallel_tool_calls` accepted (langchain-openai sends it on the function-calling path
+  and DeepSeek does not document it), and thinking disabled — thinking is on by default, it voids `temperature`, and it
+  refuses a named `tool_choice`, all three from DeepSeek's own reference. One clause here is weaker evidence than the
+  rest and is marked as such: the API requires `reasoning_content` to be echoed back on requests carrying `tools`
+  (documented, verbatim, in the thinking-mode guide), and `ChatDeepSeek` appears not to re-insert it — that second half
+  is **read in the client's source, never observed live**. It does not change the conduct, since thinking is disabled
+  either way. Informative only: the nested-batch schema.
+- **45.4 The attribution judge on `deepseek-flash`** — the client chosen by env var in `judges.py`, **per judge**, so
+  faithfulness stays on gpt-4o. Measured on the frozen chunks of `data/eval/records_2026-10-09_2050.json`, the run the
+  27 hand labels came from, through `judges.attribution(record)` unchanged with a `finding` → `headline` adapter; the
+  same ids appear in later runs with different chunks, and judging against those would compare the new judge to
+  passages the human never saw. **The gpt-4o baseline is reproduced first: 26/27, single error g05 A judged `B`**
+  (`calibration_2026-10-09_2122`, the current "decide by the idea" prompt). 25/27 with g15 A judged `both` means the
+  old prompt or a bad join; 26/27 with the error elsewhere means the `gpt-4o` alias moved snapshot. **Adoption bar:
+  ≥26/27 in each of three repetitions, and no new error pattern.** The three repetitions reuse the same 27 cases, so
+  they filter sampling noise, not a systematic error of kind — which is why the pattern rule is the one carrying
+  information, and why a single unlucky disagreement (an equivalent judge fails all three about 11% of the time)
+  reopens the bar rather than rejecting the judge.
+
+**Built as (45.1, 2026-10-13):** `src/ParallelProse/run_record.py` is the one committed writer. `RoleUsageTracker` buckets calls by the `role:<name>` tag and warns when a call carries none; **two role tags raise**, per the mechanics above, never resolve. `prompt_sha` hashes the batch shape `on_chat_model_start` really hands over — the unit test had passed a flat list, and the first live run exposed the difference as one sha for eight calls. `write_run_record` stamps `recorded_at`, `peak`, the per-role configuration (class, base_url, requested model, temperature) and, per role, calls, input/output tokens, cache reads under any service tier, returned models and prompt shas. The six call sites carry their tags (`retrieval_agent`, `composer`, `reflect`, `critique_e`, `sentence_picker`, `judge`); `run_query`/`answer_query`/`run_golden_query` thread the tracker, and `_judge` takes callbacks because the judges run outside the graph. `evaluation.configuration()` gains `critique_model`, `role_configuration()` reads the six roles off the live clients, `record_golden_entry(entry)` is the recording path, and `agent.py:22-23`'s seed comment now names both seeded clients. **Validated live, never touching DeepSeek:** a graph run recorded four roles with zero warnings (`data/eval/smoke45b_2026-10-13_221246_g01.json`), a direct `reflect` call recorded the fifth (192 in / 61 out), and a judge call recorded gpt-4o at 11,682 input / 4,992 cache-read tokens, returned `gpt-4o-2024-08-06` against the requested alias `gpt-4o`. The validation also caught a defect the tests did not: an `on_llm_end` with no start was counted without a warning; fixed. 161/161 tests pass. First measured number for 45.4: **~5.8k input tokens per attribution call, two calls per record, ~43% cache hits already.**
+
+**Why:** measured. Attribution on gpt-4o costs about $0.019 per query against about $0.001 on `deepseek-flash`
+off-peak — a ~94% cut off-peak, ~88% at peak — and the judge's independence survives, because it grades headlines
+written by gpt-4o-mini. `deepseek-flash` is the only stable target: the 2026-09-10 announcement says "We're phasing
+out V4-Pro" and routes every `deepseek-v4-pro` request to V4.1-Flash at Flash rates from 04:00 UTC on 2026-09-14, so
+asking for v4-pro already returns Flash. That is also why 45.1 records the model the API *returns* and not only the one
+requested: without it a run labelled v4-pro is a Flash run under the wrong name, and the same guard catches a moved
+`gpt-4o` snapshot. The alternative that keeps the provider stays available and asynchronous: gpt-4o through the Batch
+API is $1.25 in / $5.00 out per 1M against $2.50 / $10.00 standard — exactly half, read off that model's own row, not
+assumed from the generic batch discount — with the calibration untouched.
+
+**Out of scope, with the reason, so it is not reopened by habit:** **E and the picker stay on OpenAI.** In routine runs
+they are gpt-4o-mini; `PP_CRITIQUE_MODEL=gpt-4o` was only ever a measurement override, so there is no saving to take.
+Had they moved, three things would have had to move with them — the strict route is closed for `P`,
+`narrowed_query`, `sentence_index` and `form`, since `null` is absent from DeepSeek's strict type list and the server
+rejects unsupported types, leaving non-strict plus Pydantic validation and a bounded retry; E's field-order bias
+control (`p_adjacent` before `p_answers`) has no server guarantee outside strict and would have to be enforced by
+splitting E into two calls, one schema without `p_answers`, the way `ESecond` already restricts a schema instead of
+instructing a prompt; and `PP_SEED` has no DeepSeek equivalent. **Faithfulness stays on gpt-4o** — ~0.5k tokens per
+call, so migrating it buys almost nothing, and its judge has no human calibration at all in its current (claim,
+sentence) pair form (see the Backlog). **Synergy:** 45.1 is the instrument every later measurement reports through,
+including item 46's.
+
+### 46. E measured in the configuration it actually runs in
+
+**Status: triggered 2026-10-13, not started.** **What:** re-measure item 44's acceptance — the six golden sides that
+were false `ok` (g07 B, g09 B, g10 B, g11 B, g13 A, g15 A) all coming back `silent` — on the `critique_llm` surface as
+the code actually defaults it: gpt-4o-mini at temperature 0.5. Item 44.5 measured it at gpt-4o and temperature 0.
+`ROADMAP.md:1041` is complicit: it describes that surface as "the judges' gpt-4o/temperature 0", which is the
+measurement override, not the default in `agent.py:31-33`. Report through item 45.1's run record, so the configuration
+travels with the numbers this time.
+
+**Why:** the acceptance that closed item 44 was never measured in the configuration that serves queries, so the
+project's headline result rests on a setting nobody uses. This is a validity gap, not a cost question, and it is cheap
+to close. If the six hold on gpt-4o-mini, item 44 is confirmed as shipped and nothing follows. If they do not,
+`deepseek-flash` returns to the table **on capability, not on cost** — a stronger model at gpt-4o-mini's off-peak
+price — and then item 45's out-of-scope paragraph becomes the build list: non-strict with validation, and E split into
+two calls so the bias control holds by construction.
+
 ### Backlog (deferred, not dropped)
+
+**Faithfulness judge: hand labels in the (claim, sentence) pair form.** The current judge (`PairVerdict`, since
+`024e4d8`) grades one atomic claim against the sentence it was paired with. Every hand label on disk predates it: all
+147 rows across `calibration_2026-10-09_2104/_2122`, `calibration_post42` and `calibration_balanced_2026-10-12` carry
+the judge output in the old `{claims, unsupported}` whole-finding form, so the "27/27" and "128/147" figures measure the
+retired instrument. **The faithfulness judge therefore has no human calibration today, on gpt-4o or anywhere.** Needs a
+balanced set of pass and fail pairs labelled by hand; the 27 augustine_debord rows hold a single positive case, and the
+120 RAGTruth rows are another domain and another bar (they measure transfer, not behaviour on these passages).
+Prerequisite for migrating faithfulness, and for trusting its current numbers at all.
+
+**E and the picker on DeepSeek.** Not a cost item (see item 45's out-of-scope paragraph) — opened only if item 46 shows
+the six false `ok`s do not hold on gpt-4o-mini, i.e. on capability. Carries its own build list: non-strict structured
+output with Pydantic validation and one bounded retry loop owned by `_verdicts_for_every_book` (at most 3 calls per
+look, raising a message that names the book, repeating the prompt rather than feeding the error text back into an
+evidence-only surface), E split into two calls for the field-order control, and `order_ok` recorded per verdict out of
+the raw arguments as a sanity check on that split.
+
 
 **First evaluation experiment run.** The harness is built and available; no experiment has been run with `LANGSMITH_TRACING` on. Deferred 2026-10-12 by decision — run it when a scored, repeatable experiment is needed (it can fold in E's calibration).
 

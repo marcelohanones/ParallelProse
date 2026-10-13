@@ -36,7 +36,7 @@ def entry():
 
 
 def stub_run_query(monkeypatch, queries_run):
-    async def fake_run_query(query):
+    async def fake_run_query(query, callbacks=None):
         queries_run.append(query)
         return fake_result()
 

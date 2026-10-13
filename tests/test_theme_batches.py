@@ -83,7 +83,7 @@ def test_run_theme_batches_stores_both_sides_with_side_is_target(tmp_path, monke
     monkeypatch.setattr(tb, "QUERY_PAUSE_SECONDS", 0)
     monkeypatch.setattr(tb, "build_witness_view", lambda path: None)
 
-    async def fake_run_query(query):
+    async def fake_run_query(query, callbacks=None):
         return {"answer": answer(f"agree on {query[:10]}"), "corpora": corpora_for()}
 
     monkeypatch.setattr(tb, "run_query", fake_run_query)
@@ -149,7 +149,7 @@ def test_bite_id_map_is_keyed_by_the_corpora_not_the_composer(tmp_path, monkeypa
     monkeypatch.setattr(tb, "QUERY_PAUSE_SECONDS", 0)
     monkeypatch.setattr(tb, "build_witness_view", lambda path: None)
 
-    async def fake_run_query(query):
+    async def fake_run_query(query, callbacks=None):
         return {"answer": ComposerAnswer(agreement="x", disagreement="x", unique_findings=[
             CorpusFinding(corpus_id="A", headline="a", pairs=[SentenceClaim(claim="a", sentence="qa")])]),
             "corpora": corpora_for()}
@@ -180,7 +180,7 @@ def test_run_theme_batches_builds_the_session_tree(tmp_path, monkeypatch):
     monkeypatch.setattr(tb, "build_witness_view", lambda path: None)
     queries_run = []
 
-    async def fake_run_query(query):
+    async def fake_run_query(query, callbacks=None):
         queries_run.append(query)
         return {"answer": answer(f"agree on {query[:10]}"), "corpora": corpora_for()}
 
@@ -225,7 +225,7 @@ def test_run_theme_batches_also_writes_the_witness_view(tmp_path, monkeypatch):
     monkeypatch.setattr(tb, "QUERY_PAUSE_SECONDS", 0)
     monkeypatch.setattr("ParallelProse.witness_view.book_passage", lambda book, quote: None)
 
-    async def fake_run_query(query):
+    async def fake_run_query(query, callbacks=None):
         return {"answer": answer(f"agree on {query[:10]}"), "corpora": corpora_for()}
 
     monkeypatch.setattr(tb, "run_query", fake_run_query)

@@ -20,7 +20,7 @@ def record():
 def stub_judge(monkeypatch, answer):
     prompts = []
 
-    def fake_judge(schema, prompt):
+    def fake_judge(schema, prompt, callbacks=None):
         prompts.append(prompt)
         return answer(schema, prompt)
 
@@ -57,8 +57,10 @@ def test_attribution_fails_when_the_finding_describes_the_other_book(monkeypatch
 
 
 def test_judge_records_writes_a_row_per_pair_with_empty_human_fields_and_agreement_reads_them(monkeypatch, tmp_path):
-    monkeypatch.setattr(judges, "faithfulness", lambda r: {"A": {"pairs": 2, "unsupported": [], "passed": True}})
-    monkeypatch.setattr(judges, "attribution", lambda r: {"A": {"judged": "A", "passed": True}})
+    monkeypatch.setattr(judges, "faithfulness",
+                        lambda r, callbacks=None: {"A": {"pairs": 2, "unsupported": [], "passed": True}})
+    monkeypatch.setattr(judges, "attribution",
+                        lambda r, callbacks=None: {"A": {"judged": "A", "passed": True}})
 
     rows = json.loads(judges.judge_records([record()], out_dir=tmp_path).read_text())
 

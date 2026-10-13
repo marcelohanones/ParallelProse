@@ -44,7 +44,7 @@ class FakeStructured:
         self.result = result
         self.prompts = []
 
-    def invoke(self, prompt):
+    def invoke(self, prompt, config=None):
         self.prompts.append(prompt)
         return self.result
 
@@ -103,7 +103,7 @@ def test_retriever_retries_a_miss_with_its_narrowed_query(monkeypatch):
     seen = []
 
     class RecordingAgent:
-        async def ainvoke(self, payload):
+        async def ainvoke(self, payload, config=None):
             seen.append(payload["messages"][0].content)
             return {"messages": [
                 AIMessage(content="", tool_calls=[{"id": "t1", "name": "call_parent_retriever",

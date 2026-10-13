@@ -118,11 +118,11 @@ def retrieval_diagnostics(corpora: dict, side_target: dict[str, bool | None]) ->
             for cid, slot in corpora.items()}
 
 
-async def answer_query(query: str, side: str | None) -> tuple[ComposerAnswer, dict, dict]:
+async def answer_query(query: str, side: str | None, callbacks=None) -> tuple[ComposerAnswer, dict, dict]:
     """One query through the pipeline: run the graph, verify every (claim, sentence) pair each book contributed.
     Returns the final answer, the bite's extra fields, and the final corpora (which still hold each book's retrieved
     chunks)."""
-    result = await run_query(query)
+    result = await run_query(query, callbacks=callbacks)
     answer = result["answer"]
     quote_details = verify_quotes(answer, result["corpora"], query)
     side_target = side_is_target(result["corpora"], side)

@@ -19,8 +19,9 @@ from ParallelProse.mcp_tools import PORT, http_client, mcp, mcp_tools_as_langcha
 warnings.filterwarnings("ignore")
 load_dotenv()
 
-# Item 44.4's seed gate: PP_SEED pins the sampling draws on the shared client surface (the retrieval agent
-# and the composer). It cleans future draws only — chunks already retrieved are unaffected.
+# Item 44.4's seed gate: PP_SEED pins the sampling draws on both seeded clients — llm (the retrieval agent, the
+# composer and reflect) and critique_llm (E and the sentence picker). It cleans future draws only — chunks
+# already retrieved are unaffected.
 SEED = os.getenv("PP_SEED")
 SEED_KWARGS = {"seed": int(SEED)} if SEED else {}
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5, **SEED_KWARGS)
@@ -241,7 +242,8 @@ async def retriever(state: ReflectionState):
             }
             continue
         result = await retrieval_agent.ainvoke(
-            {"messages": [HumanMessage(content=argument)]}
+            {"messages": [HumanMessage(content=argument)]},
+            config={"tags": ["role:retrieval_agent"]},
         )
         # 3 - setting the accumulators
         chunks_list = []
@@ -327,7 +329,8 @@ def select_sentences(draft: ComposerDraft, corpora: dict) -> ComposerAnswer:
             choice = critique_llm.with_structured_output(SentenceChoice).invoke(
                 f"Claim: {claim}\n\nSentences from the book's retrieved passages:\n{listing}\n\n"
                 "Which single sentence states this claim? Judge by what the sentence means, not by shared words. "
-                "Answer with its number, or null if no single sentence states it.")
+                "Answer with its number, or null if no single sentence states it.",
+                config={"tags": ["role:sentence_picker"]})
             index = choice.sentence_index
             if index is not None and 1 <= index <= len(sentences) and index not in used:
                 used.add(index)  # one sentence carries one claim: a reused sentence is not a second grounded step
@@ -357,7 +360,7 @@ def composer(state: ReflectionState):
                   f"write a short (3-4 sentence) factual note on: {state['query']}. For each book give its own "
                   f"position as a headline and the atomic claims the passage supports; the sentences themselves "
                   f"are chosen afterwards.")
-        draft = llm.with_structured_output(ComposerDraft).invoke(prompt)
+        draft = llm.with_structured_output(ComposerDraft).invoke(prompt, config={"tags": ["role:composer"]})
         # a finding only exists for a book that answers: drop any the model wrote for a silent book
         draft.unique_findings = [slot for slot in draft.unique_findings if slot.corpus_id in ok]
         answer = select_sentences(draft, state["corpora"])
@@ -411,7 +414,7 @@ def e_judge_first(query: str, corpora: dict[str, CorpusState]) -> EFirstBatch:
         "Add exactly one entry per book, corpus_id exactly A or B as given above."
     )
     judge = critique_llm.with_structured_output(EFirstBatch)
-    return judge.invoke(prompt)
+    return judge.invoke(prompt, config={"tags": ["role:critique_e"]})
 
 
 # MARK: E SECOND JUDGE
@@ -438,7 +441,7 @@ def e_judge_second(query: str, corpora: dict[str, CorpusState]) -> ESecondBatch:
         "Add exactly one entry per book, corpus_id exactly A or B as given above."
     )
     judge = critique_llm.with_structured_output(ESecondBatch)
-    return judge.invoke(prompt)
+    return judge.invoke(prompt, config={"tags": ["role:critique_e"]})
 
 
 def postprocess_e(verdict: EVerdictBase) -> EPostVerdict:
@@ -549,7 +552,8 @@ def reflect(state: ReflectionState):
                          f"Agreement: {state['answer'].agreement}\n"
                          f"Disagreement: {state['answer'].disagreement}\n"
                          "<instruction: judge the comparison as a whole; you have no access to per-book chunks or findings, so you cannot and must not reference one book's depth specifically>")
-    comparison = llm.with_structured_output(ComparisonCritique).invoke(comparison_prompt)
+    comparison = llm.with_structured_output(ComparisonCritique).invoke(comparison_prompt,
+                                                                       config={"tags": ["role:reflect"]})
     return {"feedback": comparison.feedback, "needs_revision": comparison.needs_revision}
 
 
@@ -582,7 +586,7 @@ reflection_graph.add_edge("reflect", END)
 reflection_app = reflection_graph.compile()
 
 
-async def run_query(query: str) -> ReflectionState:
+async def run_query(query: str, callbacks=None) -> ReflectionState:
     global _server_task
     if _server_task is None:
         _server_task = asyncio.create_task(
@@ -603,7 +607,8 @@ async def run_query(query: str) -> ReflectionState:
                   "silence_cause": None, "P": None, "retry_used": False},
         }
     }
-    return await reflection_app.ainvoke(initial_state)
+    config = {"callbacks": callbacks} if callbacks else None
+    return await reflection_app.ainvoke(initial_state, config=config)
 
 
 if __name__ == "__main__":

@@ -41,8 +41,13 @@ class AttributionVerdict(BaseModel):
     reason: str
 
 
-def _judge(schema: type[BaseModel], prompt: str) -> BaseModel:
-    return judge_llm.with_structured_output(schema).invoke(prompt)
+def _judge(schema: type[BaseModel], prompt: str, callbacks=None) -> BaseModel:
+    """One judged call. The role tag lives here because the judges run outside the graph, where the graph's config
+    cannot reach them; callbacks carries the run's RoleUsageTracker (item 45.1)."""
+    config = {"tags": ["role:judge"]}
+    if callbacks:
+        config["callbacks"] = callbacks
+    return judge_llm.with_structured_output(schema).invoke(prompt, config=config)
 
 
 def _judged_books(record: dict):
@@ -52,7 +57,7 @@ def _judged_books(record: dict):
             yield finding["corpus_id"], finding
 
 
-def faithfulness(record: dict) -> dict[str, dict]:
+def faithfulness(record: dict, callbacks=None) -> dict[str, dict]:
     """Per book: does any pair's claim say more than its own sentence states? Each pair is judged on its own, so
     the question is well-posed — an atomic claim against the sentence it came from. Passes only when every pair
     passes, and a book with no pair passes nothing."""
@@ -65,7 +70,8 @@ def faithfulness(record: dict) -> dict[str, dict]:
                 f"Claim: {pair['claim']}\n\nSentence: {pair['sentence']}\n\n"
                 "Does this sentence alone, read literally, state this claim? Judge only against the sentence's "
                 "words: not the rest of the book, not what you know about the author. A claim that generalizes, "
-                "interprets or adds a cause beyond what the sentence states is not supported."))
+                "interprets or adds a cause beyond what the sentence states is not supported."),
+                callbacks=callbacks)
             if not verdict.supported:
                 unsupported.append(pair["claim"])
         results[cid] = {"pairs": len(pairs), "unsupported": unsupported,
@@ -82,7 +88,7 @@ def _without_author_names(text: str) -> str:
     return text
 
 
-def attribution(record: dict) -> dict[str, dict]:
+def attribution(record: dict, callbacks=None) -> dict[str, dict]:
     """Per book: is the headline credited to the right book? The judge sees both books' retrieved passages without
     their names, in an order fixed per entry and book (so the book under test is not always first), and says which
     set the finding describes. Passes when that is the book the finding is credited to, or both."""
@@ -99,19 +105,20 @@ def attribution(record: dict) -> dict[str, dict]:
             "Which set of passages does this finding describe? Decide by the idea the finding states (its claim, its "
             "cause, its example), not by the words it uses: a word that appears in both sets is not evidence for "
             "both. Answer 1 or 2 if the idea is stated in one set. Answer both only if each set, read on its own, "
-            "states the same idea. Answer neither if no set states it."))
+            "states the same idea. Answer neither if no set states it."),
+            callbacks=callbacks)
         judged = {"1": order[0], "2": order[1]}.get(verdict.source, verdict.source)
         results[cid] = {"judged": judged, "passed": judged in (cid, "both"), "reason": verdict.reason}
     return results
 
 
-def judge_records(records: list[dict], out_dir: Path = EVAL_DIR) -> Path:
+def judge_records(records: list[dict], out_dir: Path = EVAL_DIR, callbacks=None) -> Path:
     """Runs both judges over a list of target records and writes one row per (claim, sentence) pair, with empty
     human fields to fill by hand: human_faithful (true/false) and human_source ("A", "B", "both" or "neither")."""
     rows = []
     for record in records:
-        judged = {cid: faithfulness(record)[cid] for cid, _ in _judged_books(record)}
-        attributed = attribution(record)
+        judged = {cid: faithfulness(record, callbacks=callbacks)[cid] for cid, _ in _judged_books(record)}
+        attributed = attribution(record, callbacks=callbacks)
         for cid, finding in _judged_books(record):
             unsupported = set(judged[cid]["unsupported"])
             for pair in finding.get("pairs") or []:
