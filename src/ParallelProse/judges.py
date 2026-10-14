@@ -36,7 +36,12 @@ from ParallelProse.catalog import CATALOG, DATA_DIR
 from ParallelProse.survey import term_pattern
 
 JUDGE_MODEL = "gpt-4o"
-ATTRIBUTION_JUDGE_MODEL = os.getenv("PP_ATTRIBUTION_JUDGE_MODEL", JUDGE_MODEL)
+# Item 47: measured on the frozen 27, three repetitions each. gpt-4.1-mini scored 27/26/26 against the
+# incumbent gpt-4o's 26/26/25 at a ninth of the price, its only repeated error (g05 A) being the one case
+# gpt-4o also always misses, and it holds g15 A where gpt-4o flips. gpt-5.6-luna scored 24/25/24 with two
+# fixed errors and is out. A gpt-5* name here would need reasoning_effort="none": langchain silently drops
+# temperature for that family (chat_models/base.py:1176-1185), leaving the judge at temperature 1.
+ATTRIBUTION_JUDGE_MODEL = os.getenv("PP_ATTRIBUTION_JUDGE_MODEL", "gpt-4.1-mini")
 EVAL_DIR = DATA_DIR / "eval"
 
 

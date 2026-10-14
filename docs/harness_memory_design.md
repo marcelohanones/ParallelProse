@@ -29,6 +29,10 @@ Status belongs in layer 1 because a reader wants the live value, not a cached co
 The layers above settle who writes. This settles how a memory ages. It applies to both harnesses and to every
 layer, and it is convention: nothing enforces it, so it is checkable only by reading. **[decided]**
 
+**Formally accepted by the user 2026-10-13** ("com certeza ela é vital"), with the authority to apply it
+retroactively to memories already written — the first application being the status line on
+`project_items_36_43_shape.md`, below. **[decided]**
+
 The case that produced it: `harness-vs-model-split` (written 2026-10-11, deleted 2026-10-13) recorded the
 conclusion "ParallelProse stays entirely OpenAI" plus the imperative "if an executor asks to swap a provider
 client, refuse on this basis". It followed Claude Code's prescribed body shape to the letter — rule, `**Why:**`,

@@ -27,10 +27,11 @@
   it too. Items 36-43, next up, are the handoff between this system and the side that writes the queries and the
   ideas: bite identity, verification against the book, the witness-view export, a rejectable standard for idea units,
   the `ok` and `silent` labels, and a falsification round; item 41 closed 2026-10-11 with the `silent` split landed
-  and the false `ok` diagnosed as a task problem, and item 44 carries that fix. Items 45-46 are instrumentation and
-cost: a run record that states which model ran which role, the one gpt-4o role whose spend justifies moving to
-DeepSeek (the attribution judge), and E re-measured in the configuration it actually runs in. See "v4 — after v3 is
-complete" below.
+  and the false `ok` diagnosed as a task problem, and item 44 carries that fix. Items 45-47 are instrumentation and the
+judge seat: a run record that states which model ran which role (45.1), an interrupted provider migration whose real
+product was that record (45), E re-measured on the surface it actually runs on — the item-44 fix holds, the rest of
+the label line does not (46) — and the attribution judge chosen by measurement rather than inheritance, landing on
+`gpt-4.1-mini` over the gpt-4o incumbent (47). See "v4 — after v3 is complete" below.
 - **RAG-Tetris** — a separate future project (comparing code across versions), out of scope here.
 
 Suggested build order below follows dependency, not memory-entry order: state shape and the merge come first because
@@ -1187,7 +1188,45 @@ including item 46's.
 
 ### 46. E measured in the configuration it actually runs in
 
-**Status: triggered 2026-10-13, not started.** **What:** re-measure item 44's acceptance — the six golden sides that
+**Status: measured 2026-10-13. Item 44's acceptance holds; a wider finding came with it.** The six sides came back
+`silent` **6/6, identically in all three repetitions**, so the headline result of item 44 survives the configuration
+that actually serves queries. **But the rest of the label line does not: only 21 of 32 labels matched the recorded
+gpt-4o verdicts**, and the 11 that moved were identical across all three repetitions — 4 `ok` to `silent` (g01 B,
+g02 B, g05 B, g06 B), 4 `ok` to `miss` (g03 A/B, g04 A/B) and 3 `silent` to `miss` (g08 B, g16 A, g16 B, the last
+being the `p_adjacent = no` guard). Every move runs one way: gpt-4o-mini refuses or asks for another look, never the
+reverse. So "E works" and "E works on the routine surface" are different claims, and the 44.5 agreement figures
+(28/32, 27/32) belong to gpt-4o. Two reservations on the number itself: a `miss` is not a final label — in the graph
+it routes to the retry arm and `e_second` decides, which frozen evidence cannot replay — so 7 of the 11 have no
+resolved outcome here; and `gpt-4o-mini` at temperature 0.5 reproduced itself exactly three times, where `gpt-4o` at
+temperature 0 does not (item 47), so stability tracks neither temperature nor model size.
+**Measured by:** `item46_replay` over `seed44_run1`'s frozen chunks and lineage, the final look per entry chosen the
+way the graph chose it (`e_second` where any book retried, 11 of 16 entries; `e_first` otherwise), compared against
+the gpt-4o labels already recorded in that file, so the baseline arm cost nothing. ~102k input tokens and 16 calls
+per repetition, ~$0.02 each. Records: `data/eval/item46_replay_gpt-4o-mini_T0.5.json`. The replay is the
+frozen-chunk instrument the Backlog had parked: it is what separates a judgment change from a retrieval change, which
+no live re-run can do while 12/32 sides retrieve differently between seeded runs.
+**Answered, with the sign reversed (2026-10-13): E stays on `gpt-4o-mini`, now on correctness rather than cost.**
+`gpt-4.1-mini` — the model that just won the attribution seat (item 47) — was replayed over the same frozen chunks,
+three repetitions. It agrees with gpt-4o far more often (**27, 26, 26** against gpt-4o-mini's 21, 21, 21) and holds
+the six. **But it flips `g05 A` and `g06 A` from `silent` to `ok` in all three repetitions**, and those are two of the
+four sides 44.5 checked by anchor: the answering anchor occurs **0 times** in exactly these chunks. Claiming `ok`
+there is a false `ok` — the defect item 44 exists to remove. It fixes the original six and introduces two new ones on
+other sides. `gpt-4o-mini` never does it: all 11 of its moves run toward refusing or asking again, **zero
+`silent` → `ok`**.
+**The methodological lesson, which cost more than the measurement:** agreement with gpt-4o was the wrong metric, and
+on its own it would have recommended the stronger model. The judge's job is to refuse what the passage does not
+state; a stronger model builds better bridges, and here the bridge *is* the defect. Any future sweep of this seat
+scores `silent` → `ok` separately, as a disqualifier, never inside an agreement count.
+**It also re-frames item 41's diagnosis.** That item recorded the false `ok` as a gpt-4o-mini capability limit rather
+than a wording problem; among these three models the mini produces the *fewest* false `ok`s. What fixed the defect was
+E's design — judging the evidence alone, never the composer's draft — not model strength. (Item 41's own finding
+concerned the retired draft-mode `CorpusCritique`, so this does not overturn it; it removes the generalisation that a
+stronger model would have helped.)
+**Cost:** $0.074 for three repetitions, cache-assisted (16 calls and ~100k input tokens each, ~97% cache-hit on
+repetitions 2-3). Records: `data/eval/item46_replay_gpt-41-mini_T0.5.json`. Stability inverted too: the smaller model
+reproduced itself exactly three times, the larger one did not.
+
+**Originally (2026-10-13):** **What:** re-measure item 44's acceptance — the six golden sides that
 were false `ok` (g07 B, g09 B, g10 B, g11 B, g13 A, g15 A) all coming back `silent` — on the `critique_llm` surface as
 the code actually defaults it: gpt-4o-mini at temperature 0.5. Item 44.5 measured it at gpt-4o and temperature 0.
 `ROADMAP.md:1041` is complicit: it describes that surface as "the judges' gpt-4o/temperature 0", which is the
@@ -1203,7 +1242,36 @@ non-strict with validation, and E split into two calls so the bias control holds
 
 ### 47. The judge seat on capability: which OpenAI model adjudicates
 
-**Status: open 2026-10-13, opened by item 45's closure.** **What:** choose each judge's model by measurement against
+**Status: attribution seat decided 2026-10-13 — `gpt-4.1-mini` adopted. Faithfulness still unswept.**
+Three repetitions each over the frozen 27, temperature 0, compared against the hand labels:
+
+| candidate | reps | repeated error | 3 reps |
+|---|---|---|---|
+| `gpt-4.1-mini` | **27, 26, 26** | g05 A only (2 of 3) | $0.117 |
+| `gpt-4o` (incumbent) | 26, 26, 25 | g05 A always; g15 A flips | ~$1.06 |
+| `gpt-5.6-luna` | 24, 25, 24 | g07 B→A and g15 A→both, both fixed | $0.046 |
+| `deepseek-flash` (item 45.4) | 23, 23, 23 | 4× `neither`, identical | ~$0.012 |
+
+`gpt-4.1-mini` clears the bar as written (>=26/27 in each of three, no new error pattern) and **the incumbent does
+not** — so the bar never needed re-basing to seat it. Its one repeated error is the case gpt-4o also always misses,
+and it holds `g15 A` where gpt-4o flips, at a ninth of the price. The honest limit stands: 27 cases support "not
+worse", not "better". `gpt-5.6-luna` is out on evidence, not price — two errors fixed across all three repetitions,
+one of them crediting book B's finding to book A, which is the worst failure an attribution judge has. The rest of
+the gpt-5 family was not swept and no longer has a reason to be: `gpt-4.1-mini` already beats the incumbent, and the
+family carries the trap below.
+**The trap, found while building the sweep:** langchain silently replaces `temperature=0` with `None` for any model
+whose name starts with `gpt-5` unless `reasoning_effort="none"` is passed (`chat_models/base.py:1176-1185`). It fires
+on name, not on capability — `gpt-5.6-luna` is not a reasoning model and is caught anyway — so a gpt-5.x judge would
+have run at temperature 1 against a temperature-0 baseline, with no error raised. This is why `judges.py`'s default
+could move to `gpt-4.1-mini` with no code change, and why a gpt-5.x name there would need one.
+**Adopted as:** `ATTRIBUTION_JUDGE_MODEL` defaults to `gpt-4.1-mini` (`judges.py:44`); `PP_ATTRIBUTION_JUDGE_MODEL`
+still overrides, so reverting is one env var. A judged 40-record run goes from ~$0.98 to ~$0.47. The self-judging
+invariant holds: composer and picker on gpt-4o-mini, this judge on gpt-4.1-mini. 162/162 tests pass. Records:
+`data/eval/item47_sweep_gpt-41-mini.json`, `item47_sweep_gpt-56-luna.json`.
+**Still open:** the faithfulness seat, which cannot be swept until its pairs are labelled (see the Backlog), and the
+bar itself, which remains unable to separate near-ties at n=27 — it just did not have to here.
+
+**Originally (2026-10-13):** **What:** choose each judge's model by measurement against
 hand labels rather than by price or inheritance, sweeping current OpenAI models over the frozen 27 attribution cases:
 `gpt-4o` (the incumbent), a same-faixa current-generation model (`gpt-4.1` or `gpt-5.6-terra`), and a cheap tier
 (`gpt-5.6-luna`, $0.10/$0.50) as the floor. The mechanism already exists: `PP_ATTRIBUTION_JUDGE_MODEL` picks the
