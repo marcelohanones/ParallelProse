@@ -1268,8 +1268,42 @@ could move to `gpt-4.1-mini` with no code change, and why a gpt-5.x name there w
 still overrides, so reverting is one env var. A judged 40-record run goes from ~$0.98 to ~$0.47. The self-judging
 invariant holds: composer and picker on gpt-4o-mini, this judge on gpt-4.1-mini. 162/162 tests pass. Records:
 `data/eval/item47_sweep_gpt-41-mini.json`, `item47_sweep_gpt-56-luna.json`.
-**Still open:** the faithfulness seat, which cannot be swept until its pairs are labelled (see the Backlog), and the
-bar itself, which remains unable to separate near-ties at n=27 — it just did not have to here.
+**The faithfulness seat, measured 2026-10-14 once its pairs were labelled: the judge does not measure what it
+claims to, and the model is not the cause.** 140 hand-labelled (claim, sentence) pairs, three repetitions each,
+temperature 0. The labels carry three classes — *covered* (the sentence states everything the claim states),
+*covered with one step* (the same content reworded or one level more abstract) and *not covered* (the claim states
+something the sentence does not) — so the score is a table per class, never one agreement number:
+
+| judge | covered (19) | one step (25) | **not covered (96)** | agreement, strict | lenient |
+|---|---|---|---|---|---|
+| `gpt-4.1-mini` | 19/19 pass | 22/25 pass | **46/96 pass** | 51% | 65% |
+| `gpt-4o` | 19/19 pass | 25/25 pass | **62/96 pass** | 38% | 56% |
+| a judge that fails every pair | 0/19 | 0/25 | 0/96 | **69%** | **69%** |
+
+**Both judges score below a constant judge that rejects everything**, and the stronger model is the worse of the
+two — 62 of 96 against 46, with 17 pairs only `gpt-4o` passes. This is the second role where capability runs the
+wrong way (item 46 found the same on E), so the cause is the prompt, not the tier: the two agree at the top
+(every covered pair, nearly every one-step pair) and diverge only at the bottom, which puts the judge's cut well
+below both the strict and the lenient line. **The defect is in real output, not in the constructed pairs:** 37 of
+`gpt-4.1-mini`'s 46 false passes are among the 86 natural pairs. Both are near-deterministic (5 and 3 unstable
+pairs of 140).
+**What this costs the project:** every faithfulness figure reported so far came from this instrument, so they
+overstate faithfulness. The 147 older rows do not cover it either — they grade the retired whole-finding judge.
+**The lead on the prompt**, from the labels' notes: the prohibition reads "generalizes, interprets or adds a
+cause" and **never names an agent**, while a new agent is one of the commonest additions (`p11` has the sentence
+crediting the ideology and the claim crediting the spectacle). The largest group is different though — 13 of the
+46 are "one step *and* an addition", where the judge sees the rewording and misses what rode in with it.
+**Measured by:** `pair_labels.py` (the sheet format, the three classes, the two references) over four sheets in
+`data/eval` — 86 natural pairs from `afterC2_run1`, 29 natural pairs mined from `afterC_run1` by word overlap,
+and 25 constructed pairs; 20 of the 44 passing pairs are real composer output. `judges.pair_prompt` /
+`judge_pair` were extracted first so the run scores the production prompt rather than a copy. Cost: $0.231 for
+six passes. Records: `data/eval/item47_faithfulness_gpt-41-mini.json`, `item47_faithfulness_gpt-4o.json`,
+`faithfulness_pair_labels*.md`.
+**Open, and now measurable for the first time:** a prompt that states the judge's own criterion. Any rewrite can
+be scored against these 140 pairs for ~$0.03 a round on `gpt-4.1-mini`; before the labels existed, a rewrite was
+a guess (item 41 spent two of them). Not open: a stronger model — measured, and worse.
+**Also still open:** the adoption bar, which remains unable to separate near-ties at n=27 — it just did not have
+to on the attribution seat.
 
 **Originally (2026-10-13):** **What:** choose each judge's model by measurement against
 hand labels rather than by price or inheritance, sweeping current OpenAI models over the frozen 27 attribution cases:
@@ -1299,14 +1333,28 @@ another model, the set of legal judge models moves with them. The invariant deci
 
 ### Backlog (deferred, not dropped)
 
-**Faithfulness judge: hand labels in the (claim, sentence) pair form.** The current judge (`PairVerdict`, since
-`024e4d8`) grades one atomic claim against the sentence it was paired with. Every hand label on disk predates it: all
-147 rows across `calibration_2026-10-09_2104/_2122`, `calibration_post42` and `calibration_balanced_2026-10-12` carry
-the judge output in the old `{claims, unsupported}` whole-finding form, so the "27/27" and "128/147" figures measure the
-retired instrument. **The faithfulness judge therefore has no human calibration today, on gpt-4o or anywhere.** Needs a
-balanced set of pass and fail pairs labelled by hand; the 27 augustine_debord rows hold a single positive case, and the
-120 RAGTruth rows are another domain and another bar (they measure transfer, not behaviour on these passages).
-Prerequisite for migrating faithfulness, and for trusting its current numbers at all.
+**Faithfulness judge: hand labels in the (claim, sentence) pair form. Done 2026-10-14 — the set exists, and item 47
+reports what it found.** The judge (`PairVerdict`, since `024e4d8`) grades one atomic claim against the sentence it was
+paired with, and no hand label on disk covered that form: all 147 rows across `calibration_2026-10-09_2104/_2122`,
+`calibration_post42` and `calibration_balanced_2026-10-12` carry the judge output in the old `{claims, unsupported}`
+whole-finding form, so the "27/27" and "128/147" figures measure the retired instrument. Built instead as four sheets
+in `data/eval` plus `pair_labels.py`:
+- **86 natural pairs** (`faithfulness_pair_labels_2.md`) — every (claim, sentence) pair of `afterC2_run1`, which is
+  the clean measure of what the system produces: **4 covered, 4 one step, 78 not covered**. A positive is rare in
+  real output, which is why the other three sheets exist.
+- **29 natural pairs mined** (`_mined.md`) from `afterC_run1` by claim-word overlap with the sentence, a filter
+  checked against the 86 (it ranked all 4 covered pairs in the top 12): **8 covered, 4 one step, 17 not covered**.
+  Real output, but a biased sample — it calibrates the judge and never the system's rates.
+- **25 constructed pairs** (`_constructed.md`, `_constructed_2.md`) — minimal pairs that differ from a natural one by
+  the single addition the label's note named, plus 12 claims written to restate a picked sentence by one step. These
+  fill the two small classes; nothing from them enters a system figure.
+**Labels: AI draft, reviewed and partly corrected by the user.** Round 2 also compared the author's intended class
+with the review: 7 of 12 agreed, and all 5 divergences were *covered* vs *one step*, while all 8 self-declared doubts
+across every sheet sat on the other boundary, *one step* vs *not covered*. Both boundaries are unstable, in different
+ways: one labeller hesitates at the lower one, two labellers disagree at the upper one.
+**Why the third class earned its place:** before it, a claim that merely reworded its sentence was labelled `false`
+and sat in the same bucket as a claim that invented an agent or a cause. That is the mixing it undoes — a subtle
+distance from *covered*, an enormous one from *not covered*.
 
 **E and the picker on DeepSeek.** Not a cost item (see item 45's out-of-scope paragraph) — opened only if item 46 shows
 the six false `ok`s do not hold on gpt-4o-mini, i.e. on capability. Carries its own build list: non-strict structured

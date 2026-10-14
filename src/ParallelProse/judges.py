@@ -76,6 +76,22 @@ def _judged_books(record: dict):
             yield finding["corpus_id"], finding
 
 
+def pair_prompt(claim: str, sentence: str) -> str:
+    """The one question the faithfulness judge is ever asked. It lives here, and not inside the loop below, so that
+    a calibration run scores the prompt production uses rather than a copy of it (item 47)."""
+    return (f"Claim: {claim}\n\nSentence: {sentence}\n\n"
+            "Does this sentence alone, read literally, state this claim? Judge only against the sentence's "
+            "words: not the rest of the book, not what you know about the author. A claim that generalizes, "
+            "interprets or adds a cause beyond what the sentence states is not supported.")
+
+
+def judge_pair(claim: str, sentence: str, client=None, callbacks=None) -> bool:
+    """Does this sentence alone state this claim? One call, one pair -- the unit both the per-book loop below and
+    the calibration set measure."""
+    return _judge(client or judge_llm, "judge_faithfulness", PairVerdict,
+                  pair_prompt(claim, sentence), callbacks=callbacks).supported
+
+
 def faithfulness(record: dict, callbacks=None) -> dict[str, dict]:
     """Per book: does any pair's claim say more than its own sentence states? Each pair is judged on its own, so
     the question is well-posed — an atomic claim against the sentence it came from. Passes only when every pair
@@ -85,13 +101,7 @@ def faithfulness(record: dict, callbacks=None) -> dict[str, dict]:
         pairs = finding.get("pairs") or []
         unsupported = []
         for pair in pairs:
-            verdict = _judge(judge_llm, "judge_faithfulness", PairVerdict, (
-                f"Claim: {pair['claim']}\n\nSentence: {pair['sentence']}\n\n"
-                "Does this sentence alone, read literally, state this claim? Judge only against the sentence's "
-                "words: not the rest of the book, not what you know about the author. A claim that generalizes, "
-                "interprets or adds a cause beyond what the sentence states is not supported."),
-                callbacks=callbacks)
-            if not verdict.supported:
+            if not judge_pair(pair["claim"], pair["sentence"], callbacks=callbacks):
                 unsupported.append(pair["claim"])
         results[cid] = {"pairs": len(pairs), "unsupported": unsupported,
                         "passed": bool(pairs) and not unsupported}
