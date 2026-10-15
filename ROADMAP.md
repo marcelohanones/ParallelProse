@@ -31,7 +31,11 @@
 judge seat: a run record that states which model ran which role (45.1), an interrupted provider migration whose real
 product was that record (45), E re-measured on the surface it actually runs on — the item-44 fix holds, the rest of
 the label line does not (46) — and the attribution judge chosen by measurement rather than inheritance, landing on
-`gpt-4.1-mini` over the gpt-4o incumbent (47). See "v4 — after v3 is complete" below.
+`gpt-4.1-mini` over the gpt-4o incumbent (47) — whose faithfulness half, once its 140 pairs were labelled, turned out
+to score below a judge that rejects everything, which is what item 48 rebuilds: the judge extracts the claim's
+segments and code decides, with a typing matrix as its only bar. Built and measured the same day and **not
+accepted**: 3 false passes in 288 negative judgements against v1's 46-48, and a positive cell that fails on two hard
+false negatives plus instability. See "v4 — after v3 is complete" below.
 - **RAG-Tetris** — a separate future project (comparing code across versions), out of scope here.
 
 Suggested build order below follows dependency, not memory-entry order: state shape and the merge come first because
@@ -1278,7 +1282,11 @@ something the sentence does not) — so the score is a table per class, never on
 |---|---|---|---|---|---|
 | `gpt-4.1-mini` | 19/19 pass | 22/25 pass | **46/96 pass** | 51% | 65% |
 | `gpt-4o` | 19/19 pass | 25/25 pass | **62/96 pass** | 38% | 56% |
-| a judge that fails every pair | 0/19 | 0/25 | 0/96 | **69%** | **69%** |
+| a judge that fails every pair | 0/19 | 0/25 | 0/96 | **86%** | **69%** |
+
+(The strict cell first read 69% — the lenient figure copied across. Corrected 2026-10-14 under item 48: rejecting
+every pair scores 121/140 = 86.4% strict and 96/140 = 68.6% lenient, since only 19 of 140 pairs are positives under
+the strict view. The conclusion below is unaffected, and the gap is wider than it looked.)
 
 **Both judges score below a constant judge that rejects everything**, and the stronger model is the worse of the
 two — 62 of 96 against 46, with 17 pairs only `gpt-4o` passes. This is the second role where capability runs the
@@ -1331,6 +1339,199 @@ half to move on risk, and the one that cannot be swept at all until its pairs ar
 composer and the picker share `gpt-4o-mini` today, so no judge may be `gpt-4o-mini`; if the routine roles move to
 another model, the set of legal judge models moves with them. The invariant decides that, never the price.
 
+### 48. The faithfulness judge: extract, then decide
+
+**Status: built and measured 2026-10-14 — not accepted. The negative cell passes by an order of magnitude; the
+positive cell does not pass at all.** Build-ready spec: `docs/item48_faithfulness_spec.md`,
+produced by a CRITIQUE loop (Claude Code, the dsh harness and Markim, four rounds each way) whose rulings the spec
+records: the evidence unit stays the sentence alone read literally (D1); strict is the headline number and lenient the
+second column (D2); the instrument is fixed before the producer (D3); the gate holds on the 14 uncontested `covered`
+pairs with the 5 disputed reported and never gated and the 8 doubt-noted inside the gate (M1/M4); the per-book boolean
+survives for LangSmith while the pair-level strict rate and the addition profile become the numbers read (M2); one row
+migration, this commit (M3); a ~$1.00 calibration ceiling (M5); and the 13-ref family ratification, 9 agent-primary
+plus 4 uncertains (M6).
+
+**What:** the judge stops being asked for a verdict. One call per pair returns a **partition of the claim into verbatim
+segments**, each with `read_as` (the segment as a full proposition, claim vocabulary only), `evidence_span` (a verbatim
+substring of the sentence, or null), `relation` — `stated` / `one_step` / `absent`, the three relations being the
+labels' own three classes — and `addition_kind`, an annotation required only on `absent` and never gated. Four
+deterministic checks run outside the LLM: the segments must tile the claim, `segment` ⊆ `read_as` ⊆ `claim` under a new
+`terms_match`, every span must be a literal substring of the sentence (a fabricated one is downgraded to `absent` and
+flagged), and `strict_pass` / `lenient_pass` are derived in code — **both views from one call**, so the strict-lenient
+choice stops being a re-run. The text primitives move to `textform.py` and `quote_check` re-exports them, because
+`judges → quote_check → agent → mcp_tools` opens both Chroma stores at import. The default model moves to
+`gpt-4.1-mini` with a new `PP_JUDGE_MODEL` override, per-book records gain `rate`, `unpaired`, `coverage`,
+`addition_profile` and `judge_version: 2`, and `configuration()` gains a one-line check of the self-judging invariant.
+
+**Why (measured, item 47):** the current instrument passes 46 of the 96 `not_covered` pairs on `gpt-4.1-mini` (48
+union, 43 always) and 62 on `gpt-4o`, i.e. **below a judge that rejects everything** on both views — and the stronger
+model is the worse one, the second role where capability runs backwards. The error has a shape: pairs whose note
+records a legitimate rewording plus a rider false-pass 10 of 11, and the prompt's prohibition names "generalizes,
+interprets or adds a cause" while never naming an agent, a means, a quantity or a modality — three of the five
+families it has to catch. On real output the gap is the whole measurement: of 86 natural pairs the labels call 78 `not
+covered`, and per book the instrument reports 10/37 faithful where the labels say 2/37 lenient, 1/37 strict.
+
+**The bar, and why it is not a percentage.** Calibration is scored as a 3×3 typing matrix, in each of three
+repetitions: 14/14 on the uncontested `covered` (zero tolerance, with a 7-ref paraphrase watch column — c03, c14, m27,
+p39, p43, p68, p82 — reported pair by pair), at least 22 of the 25 `covered_one_step` pairs typed anything but
+`absent` (the lenient reading — the first wording of this cell asked for 22 typed `one_step` *and* at most 4 typed
+`stated`, which over 25 pairs is impossible; corrected while the scorer was being tested) with at most 4 of them typed
+all-`stated`, ≥82/96 rejections on `not_covered` with a union of at most 16 and **zero** false pass on the nine gated
+agent/subject refs, and at most 5 unstable pairs of 140. Accuracy is reported with its corrected floors and gates
+nothing: with the 14 passing, strict accuracy is `135 + d − g − f`, so a *passing* matrix can score 83.6% (below the
+86.4% floor) and a *failing* one 99.3%. A composite scalar is rejected on arithmetic too — a constant-`absent` judge
+and a constant-`stated` judge both score 0.33 on the mean of the three class rates.
+
+**The denominator nobody was watching.** `faithfulness` loops over a finding's `pairs` only, so the composer's
+`unpaired` claims are judged by nothing and written to no row. In `afterC2_run1` that is **15 unpaired claims against
+86 pairs** across 37 judged books (coverage 85.1%, 13 books with at least one). The rate alone is therefore not
+reportable — routing hard claims to `unpaired` would raise it with no change in quality — so `coverage` ships beside
+it, with the limitation written down that `unpaired` conflates "no sentence states it" with "its sentence already
+carries another claim".
+
+**Cost:** a 13-pair dry-run at ~$0.01 fixes the cost line and reads `cached_tokens` (the instruction block goes first
+so the static prefix can cache; item 46's ~97% does not transfer unmeasured), then a 140-pair round at $0.08-0.13 and
+three repetitions at $0.25-0.40, inside the ~$1.00 phase ceiling. The abort rule is threshold 1: the first `absent` on
+an uncontested `covered` pair makes the round unreportable, and the calls finish anyway, because the negative-side
+diagnostics are what a prompt revision needs. Production per judged 40-record run falls from ~$0.11 on `gpt-4o` to
+~$0.02-0.03.
+
+**The acceptance round (140 pairs x 3 repetitions, `gpt-4.1-mini`, temperature 0, prompt revision
+`v5b-counterpart-examples`, `instructions_sha 3fdc872c19e7`). Records:
+`data/eval/item48_acceptance_gpt-4.1-mini_2026-10-14_2127.json`.**
+
+| cell | result | bar | |
+|---|---|---|---|
+| `not_covered` rejected | **94, 94, 93** of 96 | >=82 | pass |
+| union of false passes over the three reps | **3** (p36, p70, m21) | <=16 | pass |
+| gated agent/subject refs leaked | **0** | 0 | pass |
+| not a rejecter (`model_absent`) | 108, 108, 107 of 140 | <=120 | pass |
+| `covered` not typed `absent` | **11, 12, 11** of 14 | >=13 | **fail** |
+| unstable pairs | **11** of 140 | <=5 | **fail** |
+
+**What the two failures are.** `p39` and `p43` are typed `absent` in all three repetitions -- two hard false
+negatives, both on a stance or scope word the sheet's own definition of `one_step` calls "reworded" (p39 keeps
+`modality:is considered`; p43 keeps `other:In modern society,`). `m02` and `m29` each failed once, which is
+instability, not conviction. Of the 11 unstable pairs, **7 oscillate only between `stated` and `one_step`** (d05,
+d07, d08, d09, m16, p24, p68) -- a distinction M7 made irrelevant -- so measured on the decision the gate actually
+gates (`absent` vs not) the instability is **4 of 140**, inside the bar. That re-measurement is recorded here and
+deliberately **not** applied to this round's verdict: the cell was pre-registered as typing instability, and
+re-scoring a failed round on a metric chosen afterwards is the goalpost move the spec's own conditions forbid.
+
+**What it does achieve.** On the defect the item exists to catch, **3 false passes in 288 negative judgements**
+(96 x 3) against the v1 instrument's 46-48 per single pass -- an order of magnitude, stable across repetitions, with
+zero leaks on the nine ratified agent refs. Two of the three are known reference problems: p36 is the
+qualifier-dropping shape the reference labels both ways (`the diffuse spectacle` -> `the spectacle` is `not_covered`
+at p36/m08 while `revolutionary workers councils` -> `workers councils` is `covered` at m27/p68), and m21 is an
+instability flip; only p70 is a genuine tolerance leak (an interpretive consequence accepted as a counterpart).
+
+**On the production distribution, identical in all three repetitions:** of the 86 natural pairs, **agreement 79/86
+against a rejecter's 78/86 -- an edge of one pair**, with **3 of 8 faithful pairs cleared and 2 of 78 over-claims
+leaked**. The aggregate never travels without that baseline: the natural reference is 91% negative, so 90.7% is free.
+The instrument's value is in the negative cell, not in the aggregate.
+
+**Four mechanisms were tried and measured, in this order.** v4 (prose: "a different word for something the sentence
+already states is not an addition") -- 0 of 7 watch pairs cleared, 24 of 25 typed `absent`, i.e. a near-rejecter.
+Arm A (`counterpart`: the sentence's own words for the flagged fragment, quoted and substring-checked) -- positives
+1/9 -> 4/9 on the hard set, `model_absent` 24/25 -> 14/25, and it exposed three instrument bugs of mine (C2's import
+guard firing on grammar, a function-word counterpart refused, `raw_relations` taken before the counterpart pass).
+Arm B (five worked contrast pairs authored by the dsh harness outside the 140) -- positives 13/18 on the probe, abort
+list 6 -> 2, and it fixed c03 by design. Arm C (rule 4 asking about support rather than presence, plus four more
+examples) -- **2 of 11 target pairs cleared against a pre-registered >=8, and it cost a `covered` pair**, so it was
+reverted whole and the instrument of record stayed at arm B. The measured conclusion: the remaining gain trades
+one-for-one against the negative cell, so no fifth mechanism is proposed.
+
+**The re-scope, and what it cost.** After the full 140 at one repetition, the gate was re-scoped (Markim, 2026-10-14,
+amending M7's third condition): `covered_one_step` became a **reported tolerance zone** rather than a gated cell,
+because that class encodes human tolerance for an abstraction step while D1 reads the sentence literally -- the 11
+misses in that class were ~8 implied consequences or means, ~2 subject generalizations and ~2 other. The re-scope
+rests on the validity note that was in the spec **before** the run (19 of the 39 positives are constructed, 12 mined,
+8 natural) and carries three conditions: the bar cannot be met by a rejecter (hence the `model_absent` cap), the zone
+is reported with its composition, and the natural figures travel with their own rejecter baseline. It did not rescue
+the round: the covered cell fails on its own.
+
+**Cost, reconciled.** $0.361 of the ~$1.00 phase ceiling: $0.007 (v2 probe) + $0.009 (a run whose record died on a
+serialization bug of mine, data lost -- the assembly is now stubbed end to end) + $0.007 (v4) + $0.013 + $0.013
+(arms A1/A2) + $0.015 (arm B) + $0.023 (arm C) + $0.069 (the full 140 at one rep) + **$0.205 (the acceptance round,
+against a $0.21 estimate)**. The acceptance round ran 420 calls in 11 minutes with 89% of its input cached; a judged
+40-record run falls from ~$0.11 on `gpt-4o` to ~$0.02-0.03 here.
+
+**Closed 2026-10-14 as a measured instrument, not an accepted one — adopted in production as a floor.** Markim
+accepted and the dsh harness co-signed, with nothing held. What that means in the code: `faithfulness`'s per-book
+`passed` is the lenient view, so the LangSmith column reads **"no addition detected"** and not "faithful"; the number
+is a **lower bound**, because the instrument clears 3 of 8 genuinely faithful natural pairs and leaks 2 of 78
+over-claims. The adoption rests on the detector and on the addition profile, never on the positive side. Reverting is
+one env var (`PP_JUDGE_MODEL`) and one git revert.
+
+**The named false negatives, in the spec and here:** `p39` (keeps `modality:is considered` in all three repetitions),
+`p43` (keeps `other:In modern society,` in all three), `m02` (rep 1 only, the model's own kept `agent:The spectacle`,
+not a code repair) and `m29` (rep 3 only). A trace of all eight runs settles a question the loop raised and got
+wrong, and replaces it with something better. The two inline mappings in the v4/v5a prompt were **140-derived text
+inside production's own instruction block** -- a validity defect, correctly removed at the dsh harness's request --
+and the trace shows the removal **cost no pair anywhere**: p39 and p43 were typed `absent` in arms A1 and A2 *with*
+the mappings present; p39's only pass in eight runs came from the v2 collapse (one holistic segment typed `one_step`,
+the very defect v4 existed to fix); and p43's only pass is a single sample of the mapping-free prompt, `absent` in all
+three acceptance repetitions. A free validity win with no explanatory power, which is exactly what the record should
+say about it.
+
+**Stability is recorded twice, on purpose:** **11 typing-unstable** pairs of 140 (the pre-registered cell, failed)
+and **4 gate-decision-unstable** (c01, m02, m21, m29). The seven within-flips sit exactly on the `stated`/`one_step`
+boundary the labellers themselves split 7/12 on, so their instability is a property of the criterion, not of the
+instrument. The gated-decision metric applies to future rounds only; this round's verdict stands as measured.
+
+**The mechanism ledger, closed.** v2 (one holistic `relation` field): collapsed to `one_step`, 24 of 25 probe pairs
+`absent` on the retry, a near-rejecter. v4 (prose: "a different word for something the sentence already states is not
+an addition"): 0 of 7 watch pairs. **Arm A** (`counterpart`, quoted from the sentence and substring-checked): the
+first mechanism that worked — hard positives 1/9 to 4/9, `model_absent` 24/25 to 14/25 — and it exposed three
+instrument bugs of mine. **Arm B** (five worked contrast pairs authored by the dsh harness outside the 140): probe
+positives 13/18, abort list 6 to 2. Arm C (support rather than presence, four more examples): **2 of 11 against a
+pre-registered >=8, one new leak, one `covered` pair lost** — reverted whole, and the measured proof that loosening
+costs more than it buys. Four mechanisms, two of which carried the item; no fifth is proposed.
+
+**The producer item's metric, settled here so it is not re-litigated there:** pairs carrying at least one `agent`,
+`cause_means` or `consequence` item — **29/33/28, 26/30/31, 31/31/34 pairs per repetition** on the 140. Counted per
+pair, never per item (the item-level profile double-counts multi-item segments: 117 `other` items against 96
+negatives in one repetition), and excluding `other` (the dustbin, which also carries code-forced absents),
+`evaluative` and `modality` (the renderings the reference accepts — the tolerance class this round failed on) and
+`quantity_generalization` (n=3 in the labels).
+
+**Reference maintenance, rule first, before any cell that depends on it is scored again.** Six pairs go to a blind
+adjudication — `p39`, `p43`, and the contradiction `p36`/`m08` (`the diffuse spectacle` -> `the spectacle`, labelled
+`not_covered`) against `m27`/`p68` (`revolutionary workers councils` -> `workers councils`, labelled `covered`). The
+**rule is stated before the labels** — *does dropping a qualifier or broadening a term count as adding content?* —
+because six labels cannot resolve a contradiction, and the consequence of each answer is pre-stated: tolerated means
+p36/m08 are two budgeted misses inside the <=16 union; an addition means p43 joins the ungated tolerance zone. It is
+recorded as reference maintenance and is never scored against the instrument's output. `invalid_add` doubling to 4 in
+this round, clustering on m08's "diffuse" in every repetition, is the same contradiction surfacing in the repair log.
+
+**Still open, and the only thing that is:** the blind adjudication above (Markim's own time, no API), and the
+producer item itself, which the Backlog names and which this instrument can now score with no new hand labels.
+
+**First dry-run, 2026-10-14 — it aborted, and the design moved.** 13 pairs, ~$0.007: **0 of 7 `covered` watch pairs
+typed `stated`**, the three gated agent pairs typed `one_step` with an empty addition list, and one segment in the
+whole run was `stated`. Diagnosis: the holistic `relation` field was the collapse, and the reference itself is the
+reason — `pair_labels.py` defines `covered_one_step` as "the same content, **reworded**", while four of the 14 gate
+pairs are `covered` on rewording notes (p39, p43, p82, c14). So v4 makes the model **extract** `adds` (what the
+sentence does not have at all, with its kind) and derives `absent` in code, with an anti-renaming clause in the
+prompt; and **[Markim] M7 flips D2**: lenient is the headline, strict the reported second column, with four
+conditions — strict always reported, the positive cell becoming the 39 uncontested positives typed non-`absent`, zero
+tolerance for a `covered` pair typed `absent`, and `stated_typings` reported so a round that never types `stated` is
+marked vacuous instead of published. Also fixed: C2 counted `while` as dropped content and failed p43 — a code
+repair, not a judgement, now separated in the record (`repaired_absent`, `c2_repairs`, raw relations stored) and
+exempted surgically, causal connectives excluded by name. Measured and rejected on the way: a deterministic subject
+rule catches all 9 gated agent refs but would force 18 of 25 `one_step` pairs to `absent`.
+
+**What this item does not fix.** It buys a working measurement, not quality: a calibrated instrument reports ~1-2/37
+books instead of 10/37, and every faithfulness figure published before it is void (so are the 147 older rows, which
+grade the retired whole-finding judge). The quality fix is the producer — claims sized to their sentence, or the
+composer emitting the supporting span with each claim — parked behind D3 and, from then on, measurable with no new hand
+labels. Subject *swaps* (p11: the sentence names the ideology, the claim credits the spectacle) stay outside the gated
+family by definition; covering them is a larger family and its own ruling.
+
+
+
+
+
 ### Backlog (deferred, not dropped)
 
 **Faithfulness judge: hand labels in the (claim, sentence) pair form. Done 2026-10-14 — the set exists, and item 47
@@ -1356,6 +1557,31 @@ ways: one labeller hesitates at the lower one, two labellers disagree at the upp
 and sat in the same bucket as a claim that invented an agent or a cause. That is the mixing it undoes — a subtle
 distance from *covered*, an enormous one from *not covered*.
 
+**Producer side: claims sized to the sentence they are paired with. Parked by D3 (item 48), not designed.** The
+140 labels made the producer's defect visible — 78 of 86 natural pairs state something their sentence does not — and
+item 48 only measures it. The wording lever is weaker than it looks: the composer's own field descriptions already
+forbid exactly this (`agent.py:138-139` "never a generalization, never a cause or a consequence the sentence does not
+state"; `agent.py:152-154` "each claim must be exactly what its own sentence states"; `agent.py:171-173` the same for
+the draft's claims), and instruction-only fixes have been measured and failed twice here — item 10 on `Critique`'s
+scoping and item 41's two prompt rewrites (0/6). Three candidate shapes, none chosen: **(a) wording** — atomic by form
+(no rider clause, no subject the sentence does not name) in the composer prompt (`agent.py:361-364`) and the field
+descriptions; **(b) contract** — the composer emits the supporting span with each claim, which makes the judge's job
+structurally easy but must contend with the measurement that created `select_sentences` in the first place (one call
+inventing claim and attribution together paired ~36% correctly against the selection pass's 96%, `agent.py:320-324`);
+**(c) picker** — refuse a sentence whose subject is a pronoun or an unnamed generic and send the claim to `unpaired`,
+which fixes the agent/subject family (9 of item 48's 13 ratified refs) without touching the composer, at the cost of
+coverage — the reason item 48 reports `coverage` beside the rate. Design it after item 48's round, never before: from
+then on all three are scoreable against the same 140 pairs for ~$0.03 a round, with no new hand labels. **Five
+things item 48 settled for it, so they are not re-litigated there (2026-10-14):** the metric is
+`defect_family_pairs` -- pairs carrying at least one `agent`, `cause_means` or `consequence` item -- with the
+acceptance round's per-repetition counts as the baseline (29/33/28, 26/30/31, 31/31/34), plus the pair-level lenient
+rate and coverage (85.1% on `afterC2_run1`); **the gaming surface is named up front**, since the tolerance zone means
+a composer that abstracts or hedges its claims lowers `absent` without grounding anything better, so acceptance reads
+`rate_strict`, the `stated` count and coverage **beside** the defect counts, the way the `unpaired` surface is already
+named; its acceptance is **not** scored on the covered or strict cells, which are the instrument's floor and not the
+composer's target; it gets its own budget line, because the ~$1.00 ceiling closed with item 48's calibration; and it
+needs **no new hand labels** -- the 140 calibrate the instrument, the producer item is read off runs.
+
 **E and the picker on DeepSeek.** Not a cost item (see item 45's out-of-scope paragraph) — opened only if item 46 shows
 the six false `ok`s do not hold on gpt-4o-mini, i.e. on capability. Carries its own build list: non-strict structured
 output with Pydantic validation and one bounded retry loop owned by `_verdicts_for_every_book` (at most 3 calls per
@@ -1364,11 +1590,22 @@ evidence-only surface), E split into two calls for the field-order control, and 
 the raw arguments as a sanity check on that split.
 
 
-**First evaluation experiment run.** The harness is built and available; no experiment has been run with `LANGSMITH_TRACING` on. Deferred 2026-10-12 by decision — run it when a scored, repeatable experiment is needed (it can fold in E's calibration).
+**First evaluation experiment run.** The harness is built and available; no experiment has been run with
+`LANGSMITH_TRACING` on. Deferred 2026-10-12 by decision — run it when a scored, repeatable experiment is needed (it
+can fold in E's calibration).
 
-**Retrieval misses on four Augustine sides (g05 A, g06 A, g09 A, g10 A).** E correctly labels them `silent`; the golden anchor that would make them `ok` never reaches the chunks (verified 0 occurrences in two seeded runs). This is the whole remaining gap between the current label agreement and 32/32, and it is a retrieval problem, not a judgment one — so it belongs with the retrieval work (items 13/14/37's neighbourhood), not with E. Revisit when the retrieval side is next opened.
+**Retrieval misses on four Augustine sides (g05 A, g06 A, g09 A, g10 A).** E correctly labels them `silent`; the
+golden anchor that would make them `ok` never reaches the chunks (verified 0 occurrences in two seeded runs). This is
+the whole remaining gap between the current label agreement and 32/32, and it is a retrieval problem, not a judgment
+one — so it belongs with the retrieval work (items 13/14/37's neighbourhood), not with E. Revisit when the retrieval
+side is next opened.
 
-**Frozen-chunk replay (was item 44.5b).** Design closed 2026-10-12 — capture each look's chunks+lineage from the live graph with `astream`, then replay E over exactly that; two functions, `capture_evidence` -> `replay_e`, walked through concept/design/pseudo-code. Parked before build: it buys a reproducible calibration number, not a better one — freezing retrieval keeps the four misses as `silent` and changes no verdict, because the anchors are absent from the frozen chunks. Pick it up only if a repeated, evidence-controlled calibration line is required, e.g. to isolate the g01 A flip.
+**Frozen-chunk replay (was item 44.5b).** Design closed 2026-10-12 — capture each look's chunks+lineage from the live
+graph with `astream`, then replay E over exactly that; two functions, `capture_evidence` -> `replay_e`, walked through
+concept/design/pseudo-code. Parked before build: it buys a reproducible calibration number, not a better one —
+freezing retrieval keeps the four misses as `silent` and changes no verdict, because the anchors are absent from the
+frozen chunks. Pick it up only if a repeated, evidence-controlled calibration line is required, e.g. to isolate the
+g01 A flip.
 
 **Per-theme survey and query translation (`survey.py` rebuild, `translate.py`).** Designed, not built: discover each
 theme's vocabulary from the book sentences closest to thesis + query, gate on whether the bare query's retrieval
@@ -1378,6 +1615,7 @@ retrieval misses ("Anon, anon" is verbatim in the book and still not returned) �
 like a wording failure this would fix. Revisit only if the evaluation harness (item 30) shows wording failures that
 retrieval fixes cannot reach. The existing `survey.py` (term-list levels 0-2, unused) is kept as the starting point for
 that rebuild.
+
 
 ## Out of scope here
 
