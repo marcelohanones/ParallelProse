@@ -6,36 +6,49 @@
 
 - **v1 (frozen, 2026-09-16)** — single corpus, two separate agents: a fixed reflect-loop graph and a tool-flexible MCP
   demo agent. No comparison capability, no quality loop on the flexible agent.
-- **v2 (done, 2026-10-02)** — merges the two agents into one graph and generalizes it to compare two corpora ("Parallel
-  Prose": what do two books say about an issue). Items 1 (the merge, 2026-09-19), 2 (two corpora,
+- **v2 (done, 2026-10-02)** — merges the two agents into one graph and generalizes it to compare two corpora
+  ("Parallel Prose": what do two books say about an issue). Items 1 (the merge, 2026-09-19), 2 (two corpora,
   2026-09-24), 4 (reflect as diagnostic router, 2026-09-27), 5 (per-corpus retry, 2026-09-28), and 6 (structured
   composer output, 2026-10-02) are all done (item 3 was dropped, see "Considered and dropped").
 - **v3 (done, 2026-10-03)** — five ordered phases: era-annotation and quote-extraction (items 7-8, the two cheap
-  wins), then app packaging (item 9), then making `Critique` 2-book native in two steps — a cheap instruction-only
-  try (item 10) measured before deciding on a structural fix (item 11). Items 7 (era-annotation), 8
-  (quote-extraction), 9 (app packaging), 10 (instruction-only try, measured, didn't work), and 11 (structural fix,
-  validated against item 10's own test) are all done (2026-10-02 through 2026-10-03) — see "v3 — after v2 is
-  complete" below.
-- **v4 (in progress, started 2026-10-03)** — a synthesis layer connecting several targeted queries to a stated
-  thesis (item 12, committed), then a proper test suite (item 16), then a theme parser (item 17), then the evaluation
-  harness (item 30). Items 13-15 are the retrieval and silent-verdict fixes built after item 12 was committed; items
-  18-29 are the session, brief, twin-query and quote-verification work the theme batches turned out to need; item 31
-  moved the Debord corpus to a plain EPUB, and items 32, 34 and 35 discontinued the synthesis layer, the vocabulary
-  pre-flight (item 33) and the data they left behind. The synthesis layer was always its own version — a distinct
-  capability layered on top of a finished, tested two-book comparison system; the test suite and eval harness moved
-  here from v3 since v3's own completion no longer waits on them, and now land after the synthesis layer so they cover
-  it too. Items 36-43, next up, are the handoff between this system and the side that writes the queries and the
-  ideas: bite identity, verification against the book, the witness-view export, a rejectable standard for idea units,
-  the `ok` and `silent` labels, and a falsification round; item 41 closed 2026-10-11 with the `silent` split landed
-  and the false `ok` diagnosed as a task problem, and item 44 carries that fix. Items 45-47 are instrumentation and the
-judge seat: a run record that states which model ran which role (45.1), an interrupted provider migration whose real
-product was that record (45), E re-measured on the surface it actually runs on — the item-44 fix holds, the rest of
-the label line does not (46) — and the attribution judge chosen by measurement rather than inheritance, landing on
-`gpt-4.1-mini` over the gpt-4o incumbent (47) — whose faithfulness half, once its 140 pairs were labelled, turned out
-to score below a judge that rejects everything, which is what item 48 rebuilds: the judge extracts the claim's
-segments and code decides, with a typing matrix as its only bar. Built and measured the same day and **not
-accepted**: 3 false passes in 288 negative judgements against v1's 46-48, and a positive cell that fails on two hard
-false negatives plus instability. See "v4 — after v3 is complete" below.
+  wins), then app packaging (item 9), then making `Critique` 2-book native in two steps — a cheap instruction-only try
+  (item 10) measured before deciding on a structural fix (item 11). Items 7 (era-annotation), 8 (quote-extraction), 9
+  (app packaging), 10 (instruction-only try, measured, didn't work), and 11 (structural fix, validated against item
+  10's own test) are all done (2026-10-02 through 2026-10-03) — see "v3 — after v2 is complete" below.
+- **v4 (done, 2026-10-14)** — a synthesis layer connecting several targeted queries to a stated thesis (item 12,
+  committed), then a proper test suite (item 16), then a theme parser (item 17), then the evaluation harness (item
+  30). Items 13-15 are the retrieval and silent-verdict fixes built after item 12 was committed; items 18-29 are the
+  session, brief, twin-query and quote-verification work the theme batches turned out to need; item 31 moved the
+  Debord corpus to a plain EPUB, and items 32, 34 and 35 discontinued the synthesis layer, the vocabulary pre-flight
+  (item 33) and the data they left behind. The synthesis layer was always its own version — a distinct capability
+  layered on top of a finished, tested two-book comparison system; the test suite and eval harness moved here from v3
+  since v3's own completion no longer waits on them, and now land after the synthesis layer so they cover it too.
+  Items 36-43, next up, are the handoff between this system and the side that writes the queries and the ideas: bite
+  identity, verification against the book, the witness-view export, a rejectable standard for idea units, the `ok` and
+  `silent` labels, and a falsification round; item 41 closed 2026-10-11 with the `silent` split landed and the false
+  `ok` diagnosed as a task problem, and item 44 carries that fix. Items 45-47 are instrumentation and the judge seat:
+  a run record that states which model ran which role (45.1), an interrupted provider migration whose real product was
+  that record (45), E re-measured on the surface it actually runs on — the item-44 fix holds, the rest of the label
+  line does not (46) — and the attribution judge chosen by measurement rather than inheritance, landing on
+  `gpt-4.1-mini` over the gpt-4o incumbent (47) — whose faithfulness half, once its 140 pairs were labelled, turned
+  out to score below a judge that rejects everything, which is what item 48 rebuilds: the judge extracts the claim's
+  segments and code decides, with a typing matrix as its only bar. Built and measured the same day and **not
+  accepted**: 3 false passes in 288 negative judgements against v1's 46-48, and a positive cell that fails on two hard
+  false negatives plus instability. See "v4 — after v3 is complete" below.
+- **v5 (in progress, started 2026-10-14)** — the producer side: item 48 left the project with a calibrated detector of
+  over-claiming and the measurement it had never had, and what it measures is a composer defect — 78 of 86 natural
+  pairs state something their sentence does not, and 54-56 of those 86 carry an `agent`, `cause_means` or
+  `consequence` the sentence lacks. v5 is where that is fixed rather than measured. Item 49 atomizes into the two
+  functions that make a pair, in dependency order: **49.1 `composer`** (claims sized to a single sentence of the
+  passage, its entity named, with coverage held at or above 85.1% so `unpaired` never becomes the escape hatch) and
+  **49.2 `select_sentences`**, declared only once 49.1's code exists, so the claim format is baseline when its walk
+  opens. Three candidate shapes are on the table and none is chosen yet — wording, the producer contract, or a
+  stricter picker — and the choice is a measured step, not a preference, because instruction-only fixes have failed
+  twice here (items 10 and 41). Two things ride alongside: the **blind adjudication** of six reference pairs (p39, p43
+  and the p36/m08-versus-m27/p68 contradiction, rule stated before the labels, recorded as reference maintenance and
+  never scored against the instrument), and the first **evaluation experiment** actually run with `LANGSMITH_TRACING`
+  on, which the Backlog has held since 2026-10-12 and which item 48's instrument can now score. Each item gets its own
+  budget line: the ~$1.00 ceiling closed with item 48's calibration.
 - **RAG-Tetris** — a separate future project (comparing code across versions), out of scope here.
 
 Suggested build order below follows dependency, not memory-entry order: state shape and the merge come first because
