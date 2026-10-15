@@ -1,7 +1,6 @@
 import difflib
 import math
 import re
-import unicodedata
 from bisect import bisect_right
 from collections import Counter
 from functools import lru_cache
@@ -9,28 +8,14 @@ from functools import lru_cache
 from ParallelProse.agent import ComposerAnswer
 from ParallelProse.catalog import CATALOG
 from ParallelProse.ingest import load_corpus
+# Re-exported, not redefined: the text primitives moved to textform.py so `judges` can compare in the same form
+# without importing this module's graph chain (item 48, section 9). Every existing importer of these names from
+# quote_check keeps working.
+from ParallelProse.textform import (PUNCTUATION_MAP, QUOTE_MARKS, SOFT_HYPHEN, STOPWORDS,  # noqa: F401
+                                    TRAILING_PUNCTUATION, _content_terms, match_form, normalize_text)
 
-SOFT_HYPHEN = re.compile(r"­\s*")  # the PDF's hidden hyphen, often followed by a line break
-PUNCTUATION_MAP = str.maketrans({"“": '"', "”": '"', "‘": "'", "’": "'", "—": "-", "–": "-"})
-QUOTE_MARKS = re.compile(r"[\"']")  # quote marks, wherever the model or the corpus puts them
-TRAILING_PUNCTUATION = re.compile(r"[.,;:!?]+$")  # only the end of the quote is ignored; punctuation inside it still counts
 BARE_NUMBER = re.compile(r"(?<!\S)\d{1,3}(?!\S)")  # the corpus numbers its theses inline, as a bare token
 VERIFIED_STATUSES = {"verbatim", "prefix", "fragment"}  # the quote is text the book contains, whole or cut
-
-
-def normalize_text(text: str) -> str:
-    """Lowercases, folds compatibility characters and dash/quote variants, drops soft hyphens, collapses whitespace."""
-    text = unicodedata.normalize("NFKC", text)
-    text = SOFT_HYPHEN.sub("", text).translate(PUNCTUATION_MAP)
-    return re.sub(r"\s+", " ", text).strip().lower()
-
-
-def match_form(text: str, is_quote: bool = False) -> str:
-    """The form two texts are compared in: normalized, with quote marks removed everywhere and, for a quote, its trailing punctuation removed."""
-    form = QUOTE_MARKS.sub("", normalize_text(text)).strip()
-    if is_quote:
-        form = TRAILING_PUNCTUATION.sub("", form).strip()
-    return form
 
 
 def _without_bare_numbers(text: str) -> str:
@@ -179,15 +164,6 @@ def verify_quotes(answer: ComposerAnswer, corpora: dict, query: str) -> dict[str
         details[cid] = [_sentence_status(pair.sentence, cid, corpora[cid]["chunks"], query_form)
                         for pair in (finding.pairs if finding else [])]
     return details
-
-
-STOPWORDS = frozenset("""a an and are as at be been but by can could did do does for from had has have he her his how i if in
-into is it its me my no nor not of on or our she so than that the their them then there these they this those to too us
-was we were what when where which who whom why will with would you your""".split())
-
-
-def _content_terms(text: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z]+", normalize_text(text)) if len(w) > 2 and w not in STOPWORDS}
 
 
 def verified_flags(details: dict[str, list[dict]]) -> dict[str, bool | None]:

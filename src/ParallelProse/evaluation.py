@@ -368,8 +368,17 @@ def configuration() -> dict:
         for part, config in (("child", retrieval.child_config), ("parent", retrieval.parent_config)):
             splitters[f"{part}_chunk_size_{cid}"] = config.chunk_size
             splitters[f"{part}_overlap_{cid}"] = config.chunk_overlap
+    # The self-judging invariant as a checked value, not only a docstring rule (item 48): PP_JUDGE_MODEL and
+    # PP_CRITIQUE_MODEL can each point a judge at the surface that produced what it grades, and the record is where
+    # that shows. The faithfulness judge grades the composer's claim and the picker's sentence, so both collide.
+    from ParallelProse.judges import JUDGE_VERSION
+
     return {**splitters, "system_model": llm.model_name, "critique_model": CRITIQUE_MODEL,
-            "judge_model": JUDGE_MODEL, "attribution_judge_model": ATTRIBUTION_JUDGE_MODEL}
+            "judge_model": JUDGE_MODEL, "attribution_judge_model": ATTRIBUTION_JUDGE_MODEL,
+            "faithfulness_judge_version": JUDGE_VERSION,
+            "self_judging_violation": sorted({role for role, model in
+                                              (("composer", llm.model_name), ("sentence_picker", CRITIQUE_MODEL))
+                                              if model == JUDGE_MODEL})}
 
 
 def _client_spec(client) -> dict:

@@ -287,4 +287,6 @@ def test_the_configuration_is_read_from_the_live_retrieval_objects():
 
     assert config["child_chunk_size_A"] == REGISTRY["A"].child_config.chunk_size
     assert config["parent_chunk_size_B"] == REGISTRY["B"].parent_config.chunk_size
-    assert config["system_model"] == "gpt-4o-mini" and config["judge_model"] == "gpt-4o"
+    assert config["system_model"] == "gpt-4o-mini" and config["judge_model"] == "gpt-4.1-mini"
+    # item 48: the self-judging invariant is a recorded value now, and the defaults satisfy it
+    assert config["faithfulness_judge_version"] == 2 and config["self_judging_violation"] == []
