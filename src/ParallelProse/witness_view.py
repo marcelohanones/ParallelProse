@@ -2,7 +2,8 @@ import json
 from pathlib import Path
 
 from ParallelProse.catalog import CATALOG
-from ParallelProse.quote_check import book_passage
+from ParallelProse.quote_check import book_passage, passage_mark
+from ParallelProse.textform import stable_id
 
 
 def build_witness_view(consolidated_path: Path) -> Path:
@@ -37,14 +38,30 @@ def build_witness_view(consolidated_path: Path) -> Path:
                 }
                 pairs = finding.get("pairs") or []
                 if not pairs:
+                    # No pair at all is a different absence from a span the book does not carry, and both of them
+                    # used to be the same null field: the reader could not tell "this book stayed silent" from
+                    # "the quote was checked and is not there".
                     records.append({"bite_id": None, **common, "sentence": None, "verification": None,
-                                    "passage": None, "claim": record.get("P") or finding.get("headline")})
+                                    "passage": None, "stable_id": None, "passage_status": "no_pair",
+                                    "passage_reason": "the book produced no claim-sentence pair, so no span exists"
+                                                      " to locate",
+                                    "claim": record.get("P") or finding.get("headline")})
                     continue
                 for n, pair in enumerate(pairs):
+                    passage = book_passage(CATALOG[cid], pair["sentence"])
+                    # A span the book does not carry is a refusal with a reason, never an empty field: a null
+                    # `passage` read as "no evidence here", which is the same shape as a quote that was checked and
+                    # found absent. The two have to be told apart downstream.
+                    mark = passage_mark(CATALOG[cid], pair["sentence"]) if passage is not None else None
+                    located = {"passage_status": "located", **mark} if mark else {
+                        "passage_status": "not_located",
+                        "passage_reason": "the sentence's span was not found in the book"}
                     records.append({"bite_id": bite["bite_id"][cid][n], **common,
                                     "sentence": pair["sentence"],
                                     "verification": bite["verification"][cid][n],
-                                    "passage": book_passage(CATALOG[cid], pair["sentence"]),
+                                    "passage": passage,
+                                    "stable_id": stable_id(cid, pair["sentence"]),
+                                    **located,
                                     "claim": pair["claim"]})
 
     out = consolidated_path.parent / f"witness_view_{project}_{session}.json"

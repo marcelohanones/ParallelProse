@@ -2,7 +2,8 @@
 inflection-tolerant guard must stay confined to its own function."""
 
 from ParallelProse import textform
-from ParallelProse.textform import _content_terms, match_form, normalize_text, terms_contained, terms_match
+from ParallelProse.textform import (_content_terms, match_form, norm_v2, normalize_text, stable_id,
+                                    terms_contained, terms_match)
 
 
 def test_normalize_folds_quotes_dashes_and_whitespace():
@@ -38,3 +39,15 @@ def test_quote_check_re_exports_the_same_objects():
     for name in ("normalize_text", "match_form", "STOPWORDS", "_content_terms",
                  "SOFT_HYPHEN", "PUNCTUATION_MAP", "QUOTE_MARKS", "TRAILING_PUNCTUATION"):
         assert getattr(quote_check, name) is getattr(textform, name)
+
+
+def test_stable_id_is_the_span_s_own_identity_so_a_rebuild_cannot_change_it():
+    first = stable_id("B", "The spectacle is capital accumulated to the point where it becomes image.")
+    assert first == stable_id("B", "The  spectacle is capital accumulated to the point where it becomes image. ")
+    assert first != stable_id("A", "The spectacle is capital accumulated to the point where it becomes image.")
+    assert first.startswith("s") and len(first) == 13
+
+
+def test_norm_v2_folds_quotes_and_whitespace_and_nothing_else():
+    assert norm_v2("  The “Sign”\nover  the thing ") == 'the "sign" over the thing'
+    assert norm_v2("em—dash") == "em—dash"  # unlike normalize_text: an identity must never widen

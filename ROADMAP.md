@@ -1545,6 +1545,86 @@ family by definition; covering them is a larger family and its own ruling.
 
 
 
+### 51. Stage 2, G1: the book's structure crosses the pipeline
+
+**Status: built, measured and closed 2026-10-16.** The first item of the retrieval-stage redesign, settled by a
+CRITIQUE loop (Claude Code, the dsh harness and Markim, nine rounds each way, `CC-85`-`CC-123` / `DSH-159`-`DSH-177`).
+The stage's map — every known problem, grouped **by cause**, ordered by where it appears in the flow — is
+`docs/stage2_retrieval_map_2026-10-16.md`; the consumer's side is `docs/editorial_contract_2026-10-16.md`.
+
+**The method, decided by Markim and now governing every stage of the redesign:** list the known problems, group them by
+cause (a cause not established gets an explicit *unknown cause* group, never a guess and never a merge by symptom),
+order by appearance in the flow, and **start an item only once the previous one is closed**, unless a dependency is
+written down. G1 was first because it happens at ingest, before any query exists, and every later number is measured in
+the units it defines.
+
+**Why it was first, and what it hid.** `SplitterConfig.separator` was `"\n"` and served *both* splitters through
+`asdict`. The Confessions' epub carries line breaks inside its paragraphs (458 of 497, up to 54 of them); the Spectacle's
+carries none. So the parent splitter cut **inside** a paragraph in book A: **139 of 497 paragraphs (28%) existed whole in
+no chunk at all**, while book B had 0 of 249. That is the entire known-item retrieval ceiling: of 40 sampled paragraphs
+of A used as their own query, the 23 uncut ones were found at rank 1 (23/23) and the 17 cut ones were never found
+(0/17) — perfect separation, so what looked like a retrieval or vocabulary problem was one line of configuration. The
+earlier `confidence` story ("counts chunks, dilutes B") was withdrawn: the field never existed in `src/`.
+
+**What:** paragraph identity is minted in **one** place, `ingest.epub_paragraphs` returning `Paragraph` records
+(`index`, `chapter`, `chapter_seq`, `text`, `quoted`, `source`); `_load_epub` groups those into chapter Documents and
+`quote_check._paragraph_records` reads the same records, so the chunking layer cannot mint a second id (two sources
+would hand one paragraph two ids, and the first rebuild would make it permanent). Body text is told from apparatus by
+**prose + nav**: `NON_BODY_CHAPTERS` applies only to an item the book names in the nav, and prose (one block of 20+
+words) decides everything else — which drops the four items the list never caught, three with no nav entry and one whose
+nav title is the book's own title. `_block_text` also drops typographic ornament (the `*` between Books and the closing
+`* * *`: 14 blocks with no word in them, each of which had been taking an address). **Quotation marks survive the
+ingest**: the Spectacle opens each of its nine chapters with a `blockquote` quoting someone else, and those were
+flattened into the chapter text with no mark, so a claim citing Machiavelli or Feuerbach came back `verbatim` from book B
+and was credited to Debord; the attribution now travels as `source` and never as a paragraph. The parent splitter cuts on
+the blank line between paragraphs; the child gets `ChildSplitterConfig`, **with no separator field at all**, and a
+recursive splitter, so the size obeys the configuration rather than the source file. `textform` gains `norm_v2` and
+`stable_id` (`"s" + sha1(book|norm_v2(span))[:12]`), deliberately narrower than the pinned `normalize_text` because an
+identity must never widen. `book_passage` resolves **both** ends of a span and returns every paragraph it touches;
+`passage_mark` returns the address and the quotation marks; and `witness_view` writes a declared refusal
+(`passage_status` + reason, `not_located` or `no_pair`) where it used to write a bare null. Finally
+`add_parent_child_docs` gained a third exit: a split that no longer matches the stores **with** `rebuild=False` now
+fails naming both counts instead of re-embedding — `rebuild` was never a spending gate, only an override, and
+`mcp_tools` calls this at module level, so landing a splitter change used to re-embed both books silently.
+
+**The closing bar, seven conditions, each checkable with no model and no label:**
+
+| | book A | book B |
+|---|---|---|
+| 1. no paragraph cut by a unit boundary | **0/473** | **0/238** |
+| 2. known-item top-1, **integral** containment | **40/40** (was 23/40) | **40/40** |
+| 3. a span crossing a boundary comes back whole; an absent one is a declared refusal | yes | yes |
+| 4. apparatus out / quotations marked | 13 chapters (was 16), 0 ornaments | 9 (was 10), **9/9** epigraphs with source |
+| 5. `stable_id` identical across a rebuild; guard silent on the live stores | **20/20** | **20/20** |
+| 6. children above `chunk_size` | **0/1887** | **0/631** |
+| 7. multi-paragraph parents showing the boundary | **167/167** (+24 single) | **56/56** (+4) |
+
+Paragraphs A 473 · B 238; parents A 191 · B 60; children A 1887 · B 631. `pytest` → **235 passed**.
+
+**Cost: US$ 0.00768**, two rebuilds of 191,925 and 191,895 tokens (US$ 0.00384 each, counted with `cl100k_base` over
+the children actually sent, reconciled against US$ 0.0041/0.0043 estimated). Landing was atomic by construction: the
+guard made `import mcp_tools` raise while the split diverged, so the suite would not even collect until the rebuild ran.
+
+**Declared residual risks**, both with the same counterpart — **adding a book means looking at these two things, not
+just copying an epub into `data/`**. (i) A translator's note is real prose that no structural rule separates from a
+chapter; what drops it is the book *naming* the section, so an edition titling it "A Note on the Translation" would
+escape the list, pass the prose test, and have the translator's prose attributed to the author. (ii) Child chunk size
+now obeys the configuration, but a new book's paragraph shape is unknown; check the size distribution.
+
+**What this item does not fix.** The unit **delivered** to the composer and the judges is still the parent chunk, now
+aligned and delimited but still ~4,000 chars — `format_context` (`agent.py:306`), `select_sentences` (`agent.py:328`),
+`verify_quotes` (`quote_check.py:164`), the attribution judge (`judges.py:463`) and `replay_e` all read `chunks`. That
+is a different cause (the delivery contract, not the ingest), so by the method above it is the **next item**, named and
+parked in the map's §8.3; G1 is its precondition, since a chunk can only be resolved to a paragraph once the paragraph
+survives the pipeline. And nothing here was measured on a real query run: the seven conditions are structural, and
+whether retrieval now reaches book B's material on an actual thesis belongs to the next group (G2) and costs money.
+Three ledger errors of one family were recorded on the way and are worth carrying into the delivery item, which is
+entirely about units: a containment-by-substring metric does not answer a question about a text unit — a truncated
+target (`match_form(p)[:200]`) read 30/40 where integral containment reads 23/40, `"book i"` matched inside `"the book
+is"`, and a `p1` paragraph field was reported from a document instead of from the stores, where no paragraph field
+existed at all.
+
+
 ### Backlog (deferred, not dropped)
 
 **Faithfulness judge: hand labels in the (claim, sentence) pair form. Done 2026-10-14 — the set exists, and item 47
@@ -1580,7 +1660,9 @@ scoping and item 41's two prompt rewrites (0/6). Three candidate shapes, none ch
 (no rider clause, no subject the sentence does not name) in the composer prompt (`agent.py:361-364`) and the field
 descriptions; **(b) contract** — the composer emits the supporting span with each claim, which makes the judge's job
 structurally easy but must contend with the measurement that created `select_sentences` in the first place (one call
-inventing claim and attribution together paired ~36% correctly against the selection pass's 96%, `agent.py:320-324`);
+inventing claim and attribution together found a candidate sentence for ~36% of claims against the selection
+pass's 96% (`agent.py:320-324`; both are oracle yield from the 16-entry era — a sentence being *found*, never
+human-labelled, not correctness — see item 50, §12);
 **(c) picker** — refuse a sentence whose subject is a pronoun or an unnamed generic and send the claim to `unpaired`,
 which fixes the agent/subject family (9 of item 48's 13 ratified refs) without touching the composer, at the cost of
 coverage — the reason item 48 reports `coverage` beside the rate. Design it after item 48's round, never before: from
@@ -1636,3 +1718,26 @@ that rebuild.
 releases) is a separate future project, built elsewhere, not in this directory. If a design choice here ever has to pick
 between what's best for this project and what would ease future sharing with RAG-Tetris, this project wins — Tetris gets
 addressed when it actually starts.
+
+## Pendente de decisão — arquitetura de referência greenfield (sessão dsh, 2026-10-15)
+
+Uma releitura do projeto contra as bibliotecas de 2026 produziu três briefs de pesquisa em `docs/research/` e um
+plano de arquitetura de referência em `docs/item50_greenfield_plan.md`. **Nada daquele plano foi implementado**: o
+módulo de spike foi rascunhado e removido na mesma sessão. O que mudou em `src/` desde então veio de outra frente — o
+redesenho da etapa 2 por causa, cujo primeiro item é o **item 51** (G1, fechado em 2026-10-16) — e não deste plano.
+Itens 49 e 50 não têm seção numerada aqui: o 49 (o lado do produtor) está parado atrás da decisão abaixo, e o 50 é
+este bloco.
+
+A conclusão é positiva mas estreita: a simplificação grande está na **citação nativa** (a API do provedor devolve
+o span), que apaga o picker de sentença, a metade verificadora do `quote_check` e o juiz de faithfulness rodando
+no pipeline; o resto é padrão (~100 linhas para o grade→rewrite) e juiz tipado (Laya local, grátis; Jev como
+alternativa hospedada). O que a tabela original prometia e **não** existe: CRAG/Self-RAG como pacote (LlamaPacks
+arquivado), RAGAS com manutenção, avaliador de faithfulness confiável no framework, e o SubQuestionQueryEngine
+não compensa para dois livros.
+
+Decisão pendente, do Markim: **trocar a geração para a Anthropic** (único provedor prático que devolve o span da
+citação) como premissa da Fase 0. Se recusada, a arquitetura atual permanece. Item 48 muda de papel no plano: o
+estágio de runtime sai, as 140 etiquetas e a matriz ficam como acceptance set e auditoria. Preços e o achado de
+que o plano Pro não dá créditos de API: `docs/research/provider-pricing-and-subscriber-credits-2026-10.md`.
+
+*A numeração e a posição deste bloco no ROADMAP são do CC — escrito pela sessão dsh como ponteiro de layer 1.*

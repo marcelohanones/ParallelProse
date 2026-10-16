@@ -1,5 +1,6 @@
 from ParallelProse import quote_check as qc
 from ParallelProse.agent import ComposerAnswer, CorpusFinding, SentenceClaim
+from ParallelProse.ingest import Paragraph
 from ParallelProse.quote_check import normalize_text, verified_flags, verify_quotes
 
 QUERY = "How is time experienced by people?"
@@ -68,27 +69,25 @@ def test_changed_punctuation_inside_the_quote_is_still_not_found(monkeypatch):
     assert 0 < detail["similarity"] < 1
 
 
-class Chapter:
-    def __init__(self, page_content):
-        self.page_content = page_content
-
-
 class Book:
-    """A fresh class per test file import is enough: _chapters/book_paragraphs/etc. cache by instance identity,
-    and every test that needs a stub book makes its own via stub_book(), never sharing one across tests."""
+    """A fresh class per test file import is enough: book_paragraphs/etc. cache by instance identity, and every
+    test that needs a stub book makes its own via stub_book(), never sharing one across tests."""
     path = "irrelevant.epub"
 
 
-def stub_book(monkeypatch, *paragraphs):
-    monkeypatch.setattr(qc, "load_corpus", lambda path: [Chapter("\n\n".join(paragraphs))])
-    qc._chapters.cache_clear()
+def stub_book(monkeypatch, *paragraphs, quoted=(), source=None):
+    """Feeds the paragraph records the ingest mints, which is where the split now happens (test_ingest covers it)."""
+    records = tuple(Paragraph(index=i, chapter="Chapter", chapter_seq=i, text=text,
+                              quoted=i in quoted, source=source if i in quoted else None)
+                    for i, text in enumerate(paragraphs))
+    monkeypatch.setattr(qc, "_paragraph_records", lambda book: records)
     qc.book_paragraphs.cache_clear()
     qc._book_raw_paragraphs.cache_clear()
     qc._book_sentences.cache_clear()
     return Book()
 
 
-def test_book_paragraphs_splits_on_the_blank_line_load_corpus_uses_between_paragraphs(monkeypatch):
+def test_book_paragraphs_carries_the_ingest_addresses_in_match_form(monkeypatch):
     book = stub_book(monkeypatch, "First paragraph.", "Second paragraph.")
 
     paragraphs, starts = qc.book_paragraphs(book)
@@ -194,3 +193,31 @@ def test_every_pair_gets_its_own_entry_in_order():
 
 def test_normalize_text_folds_case_and_whitespace():
     assert normalize_text("  Time\n\tPASSES  ") == "time passes"
+
+
+def test_book_passage_carries_every_paragraph_the_span_touches(monkeypatch):
+    book = stub_book(monkeypatch, "The auditor is not called on to relieve", "but only to grieve.")
+
+    passage = qc.book_passage(book, "called on to relieve but only to grieve")
+
+    assert passage == "The auditor is not called on to relieve\n\nbut only to grieve."
+
+
+def test_book_passage_is_none_when_the_book_does_not_carry_the_span(monkeypatch):
+    book = stub_book(monkeypatch, "nothing like the quote at all")
+
+    assert qc.book_passage(book, "give me chastity and continency") is None
+    assert qc.passage_mark(book, "give me chastity and continency") is None
+
+
+def test_passage_mark_tells_a_quoted_paragraph_from_the_author_s_own(monkeypatch):
+    book = stub_book(monkeypatch, "Debord's own sentence.", "A borrowed sentence.",
+                     quoted=(1,), source="—Hegel, The Phenomenology of Spirit.")
+
+    own = qc.passage_mark(book, "Debord's own sentence")
+    borrowed = qc.passage_mark(book, "A borrowed sentence")
+
+    assert own["quoted"] is False and own["quote_source"] is None
+    assert borrowed["quoted"] is True
+    assert borrowed["quote_source"] == "—Hegel, The Phenomenology of Spirit."
+    assert borrowed["passage_index"] == 1

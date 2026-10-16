@@ -7,7 +7,7 @@ from functools import lru_cache
 
 from ParallelProse.agent import ComposerAnswer
 from ParallelProse.catalog import CATALOG
-from ParallelProse.ingest import load_corpus
+from ParallelProse.ingest import epub_paragraphs
 # Re-exported, not redefined: the text primitives moved to textform.py so `judges` can compare in the same form
 # without importing this module's graph chain (item 48, section 9). Every existing importer of these names from
 # quote_check keeps working.
@@ -48,19 +48,19 @@ def _differences(quote: str, window: str, limit: int = 4) -> list[list[str]]:
     return [[tag, quote[i1:i2], window[j1:j2]] for tag, i1, i2, j1, j2 in opcodes if tag != "equal"][:limit]
 
 
-@lru_cache
-def _chapters(book):
-    """The book's chapters, parsed once per book and shared by every cache below."""
-    return load_corpus(str(book.path))
+def _paragraph_records(book):
+    """The book's paragraphs and their addresses, read from the ingest — the one place an address is minted.
+
+    This layer verifies and displays; it never mints a second identity. Two sources would hand the same paragraph
+    two ids, and the first rebuild would make the divergence permanent."""
+    return epub_paragraphs(str(book.path))
 
 
 @lru_cache
 def book_paragraphs(book) -> tuple[list[str], list[int]]:
     """The book's paragraphs in match_form, and where each one starts in the paragraphs joined with a space.
-    _load_epub joins a chapter's paragraphs with a blank line, so splitting on it gives them back. Cached per
-    book: a session runs many queries against the same two books, and this parses the epub from scratch."""
-    paragraphs = [match_form(p) for chapter in _chapters(book)
-                  for p in chapter.page_content.split("\n\n") if p.strip()]
+    Cached per book: a session runs many queries against the same two books, and the ingest parses the epub."""
+    paragraphs = [match_form(record.text) for record in _paragraph_records(book)]
     starts, position = [], 0
     for paragraph in paragraphs:
         starts.append(position)
@@ -70,8 +70,8 @@ def book_paragraphs(book) -> tuple[list[str], list[int]]:
 
 @lru_cache
 def _book_raw_paragraphs(book) -> list[str]:
-    """The book's paragraphs as written — same split as book_paragraphs, no match_form — for human-readable display."""
-    return [p for chapter in _chapters(book) for p in chapter.page_content.split("\n\n") if p.strip()]
+    """The book's paragraphs as written — same addresses as book_paragraphs, no match_form — for display."""
+    return [record.text for record in _paragraph_records(book)]
 
 
 @lru_cache
@@ -104,17 +104,51 @@ def context_window(book, quote: str, around: int = 1) -> str | None:
     return " ".join(sentences[lo:hi])
 
 
-def book_passage(book, quote: str) -> str | None:
-    """The paragraph of the book that contains the quote, as written — the evidence unit the quote anchors into.
-    None when no paragraph contains it (an echo, an invention, or a fuzzy number match). Locates the quote by
-    character span in the joined paragraph forms, for the reason context_window does: containment alone matches a
-    short quote everywhere in this text's over-split sentences."""
+def _paragraph_span(book, quote: str) -> tuple[int, int] | None:
+    """The index range of the paragraphs the quote's whole span falls in, or None when the book does not carry it.
+
+    Both ends are resolved, not just the start: a quote that runs across a paragraph break belongs to every
+    paragraph it touches, and returning only the opening one hands back a passage that does not contain the
+    evidence it is supposed to carry. Located by character span in the joined paragraph forms, for the reason
+    context_window does: containment alone matches a short quote everywhere in this text's over-split sentences."""
     quote_form = match_form(quote, is_quote=True)
     forms, starts = book_paragraphs(book)
     idx = " ".join(forms).find(quote_form)
     if idx == -1:
         return None
-    return _book_raw_paragraphs(book)[bisect_right(starts, idx) - 1]
+    first = bisect_right(starts, idx) - 1
+    last = bisect_right(starts, idx + len(quote_form) - 1) - 1
+    return first, last
+
+
+def book_passage(book, quote: str) -> str | None:
+    """The passage of the book that carries the quote's whole span, as written — the evidence unit the quote
+    anchors into, every paragraph it touches. None when the book does not carry the span at all (an echo, an
+    invention, or a fuzzy number match); the caller declares what that None means and never writes it as an
+    empty field (`witness_view`)."""
+    located = _paragraph_span(book, quote)
+    if located is None:
+        return None
+    first, last = located
+    return "\n\n".join(_book_raw_paragraphs(book)[first:last + 1])
+
+
+def passage_mark(book, quote: str) -> dict | None:
+    """The quote's address and its quotation marks: where the passage sits, and whether the book quotes it from
+    someone else instead of asserting it. None when the span is not in the book.
+
+    A paragraph the author quotes carries `quoted` and the `source` the edition prints, so a reader downstream can
+    tell the author's own words from a passage he borrowed — the Spectacle opens each chapter with one."""
+    located = _paragraph_span(book, quote)
+    if located is None:
+        return None
+    first, last = located
+    records = _paragraph_records(book)
+    covered = records[first:last + 1]
+    quoted = [record for record in covered if record.quoted]
+    return {"passage_index": first, "passage_indices": [record.index for record in covered],
+            "chapter": covered[0].chapter, "chapter_seq": covered[0].chapter_seq,
+            "quoted": bool(quoted), "quote_source": quoted[0].source if quoted else None}
 
 
 def _sentence_status(sentence: str, cid: str, chunks: list[str], query_form: str) -> dict:

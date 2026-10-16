@@ -31,7 +31,10 @@ def write_session(tmp_path, bites):
 
 
 RECORD_KEYS = {"bite_id", "session", "query_code", "query", "corpus_id", "edition",
-               "retrieval", "sentence", "verification", "passage", "claim"}
+               "retrieval", "sentence", "verification", "passage", "claim",
+               # G1: an absent passage is a declared refusal, never a bare null -- "the book stayed silent" and
+               # "the span was checked and is not there" are different records now.
+               "stable_id", "passage_status", "passage_reason"}
 
 
 def test_one_record_per_pair_per_book_per_query(tmp_path, monkeypatch):
@@ -177,3 +180,34 @@ def test_edition_and_query_code_travel_through(tmp_path, monkeypatch):
     assert record["retrieval"] == {"label": "ok", "side_is_target": True, "lineage": [{"tool": "x"}],
                                    "silence_cause": None}
     assert record["bite_id"] == "idA"
+
+
+def test_a_span_the_book_does_not_carry_is_a_declared_refusal_not_an_empty_passage(tmp_path, monkeypatch):
+    monkeypatch.setattr("ParallelProse.witness_view.book_passage", lambda book, sentence: None)
+    consolidated = write_session(tmp_path, [
+        bite("1.1a", "q1",
+             [{"corpus_id": "A", "headline": "ha", "pairs": [pair("ca", "qa")]}],
+             {"A": {"label": "ok", "lineage": [], "silence_cause": None}}, {"A": None},
+             {"A": [{"status": "not_found"}]}, {"A": ["idA"]}),
+    ])
+
+    record = json.loads(build_witness_view(consolidated).read_text())["records"][0]
+
+    assert record["passage"] is None
+    assert record["passage_status"] == "not_located"
+    assert record["passage_reason"] == "the sentence's span was not found in the book"
+    assert record["stable_id"].startswith("s")
+
+
+def test_a_book_with_no_pair_is_told_apart_from_a_span_that_was_not_found(tmp_path, monkeypatch):
+    monkeypatch.setattr("ParallelProse.witness_view.book_passage", lambda book, sentence: None)
+    consolidated = write_session(tmp_path, [
+        bite("1.1a", "q1", [], {"A": {"label": "silent", "lineage": [], "silence_cause": "absent", "P": "not here"}},
+             {"A": None}, {"A": []}, {"A": []}),
+    ])
+
+    record = json.loads(build_witness_view(consolidated).read_text())["records"][0]
+
+    assert record["passage"] is None
+    assert record["passage_status"] == "no_pair"
+    assert "no claim-sentence pair" in record["passage_reason"]

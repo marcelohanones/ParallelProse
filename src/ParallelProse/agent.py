@@ -319,8 +319,9 @@ def _sentences(chunks: list[str]) -> list[str]:
 
 def select_sentences(draft: ComposerDraft, corpora: dict) -> ComposerAnswer:
     """The second pass: for every claim, one call asks which single sentence of that book states it, and the pair
-    carries that sentence verbatim. The task is selection, not generation — the shape that pairs 96% of claims
-    correctly, against the ~36% a one-shot composer managed. A claim no single sentence states is left out of the
+    carries that sentence verbatim. The task is selection, not generation — the shape the project kept, against the
+    ~36% a one-shot composer managed. Both figures come from the 16-entry era probe: 96% is the share of claims a
+    candidate sentence was *found* for (oracle yield, never human-labelled), not the share paired correctly. A claim no single sentence states is left out of the
     pairs and kept in the finding's unpaired list."""
     findings = []
     for slot in draft.unique_findings:

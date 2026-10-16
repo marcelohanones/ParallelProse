@@ -11,6 +11,7 @@ every count recorded in item 47 and in `docs/item48_faithfulness_spec.md` -- the
 frozen. `terms_match` is new and used only by the judge's containment guards (spec section 4, C2).
 """
 
+import hashlib
 import re
 import unicodedata
 
@@ -69,3 +70,22 @@ def terms_contained(inner: str, outer: str) -> list[str]:
     The judge's two containment guards are this call in both directions (spec section 4, C2)."""
     outer_terms = _content_terms(outer)
     return [term for term in sorted(_content_terms(inner)) if not terms_match(term, outer_terms)]
+
+
+# MARK: STABLE IDENTITY
+def norm_v2(text: str) -> str:
+    """The frozen normal form a span's identity is computed in: lowercased, whitespace collapsed, quote marks
+    folded. Deliberately narrower than `normalize_text` -- no NFKC, no dash folding, no soft hyphen -- because this
+    one is an identity and must never be widened: a looser form would merge two spans that the book prints
+    differently, and a tighter one would mint a new id for a span already cited. `normalize_text` stays the
+    comparison form and stays pinned (see this module's header); the two are separate on purpose."""
+    folded = text.translate(str.maketrans({"“": '"', "”": '"', "‘": "'", "’": "'"}))
+    return re.sub(r"\s+", " ", folded).strip().lower()
+
+
+def stable_id(book: str, span: str) -> str:
+    """A span's identity, derived from the span itself -- so it survives a rebuild, which the chunk's `doc_id`
+    (a uuid4) does not. Content-addressed by construction: the same text in the same book is the same id, in any
+    process, before or after re-embedding."""
+    digest = hashlib.sha1(f"{book}|{norm_v2(span)}".encode()).hexdigest()
+    return "s" + digest[:12]

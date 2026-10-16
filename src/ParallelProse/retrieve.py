@@ -21,7 +21,7 @@ from langchain_community.vectorstores import Chroma
 from langchain_core.documents import Document
 from langchain_core.runnables import RunnableLambda
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_text_splitters import CharacterTextSplitter
+from langchain_text_splitters import CharacterTextSplitter, RecursiveCharacterTextSplitter
 
 from ParallelProse.ingest import load_corpus
 from ParallelProse.catalog import CHROMA_PERSIST_DIR, DATA_DIR
@@ -32,9 +32,24 @@ warnings.filterwarnings("ignore")
 # MARK: Retrieval
 @dataclass
 class SplitterConfig:
+    """The parent splitter's shape. `separator` is the parent's alone: it has to be the blank line between
+    paragraphs, so a chunk boundary never lands inside one. The child has its own config below, without a
+    separator field at all -- one knob served both for a while, and setting it to the parent's value took the
+    child with it."""
     chunk_size: int
     chunk_overlap: int
-    separator: str = "\n"
+    separator: str = "\n\n"
+
+
+@dataclass
+class ChildSplitterConfig:
+    """The child splitter's shape -- size and overlap, and no separator. A character splitter honours chunk_size
+    only where its separator happens to appear, so the size obeyed the source file rather than the configuration:
+    the Spectacle, whose paragraphs carry no internal line break, got 70% of its children above 400 chars (up to
+    3138), while the Confessions obeyed only by accident, because its epub hard-wraps lines inside a paragraph.
+    A recursive splitter falls back through separators until the size holds, so the number is the configuration's."""
+    chunk_size: int
+    chunk_overlap: int
 
 
 class Retrieval:
@@ -43,7 +58,7 @@ class Retrieval:
             collection_name,
             source_path,
             llm=ChatOpenAI(model="gpt-4o-mini", temperature=0.5),
-            child_config=SplitterConfig(chunk_size=400, chunk_overlap=50),
+            child_config=ChildSplitterConfig(chunk_size=400, chunk_overlap=50),
             parent_config=SplitterConfig(chunk_size=4000, chunk_overlap=100),
             persist_directory=CHROMA_PERSIST_DIR,
             embedding_model=OpenAIEmbeddings(
@@ -64,7 +79,7 @@ class Retrieval:
         self.parent_retriever = self.make_parent_retriever()
 
     def make_child_splitter(self):
-        return CharacterTextSplitter(**asdict(self.child_config))
+        return RecursiveCharacterTextSplitter(**asdict(self.child_config))
 
     def make_parent_splitter(self):
         return CharacterTextSplitter(**asdict(self.parent_config))
@@ -92,7 +107,11 @@ class Retrieval:
         """this function controls wether to build the database. It re-split the corpus to get the expected number of chunks. Then compare it against vector_store and doc_store to avoid unnecessary re-embedding.
         The decision tree is:
         if not rebuild and ==N -> return as is
-        everything else -> drop and rebuild"""
+        if not rebuild and !=N -> refuse, naming both counts: a divergence means the splitter configuration changed,
+            and rebuilding it re-embeds the whole corpus. That is a spend, so it only happens when someone asked
+            for it in writing (`rebuild=True`) -- never as a side effect of an import. `mcp_tools` calls this at
+            module level for both books, so without this branch landing a splitter change would re-embed silently.
+        if rebuild -> drop and rebuild"""
 
         # LOADING DATA
         corpus = load_corpus(str(self.source_path))
@@ -113,6 +132,14 @@ class Retrieval:
         if not rebuild and (parent_match and child_match):
             print("parent and child matches vector_store and docstore")
             print("nothing loaded")
+        elif not rebuild:
+            raise RuntimeError(
+                f"{self.collection_name}: the split no longer matches the stores -- parents "
+                f"{len(parent)} split vs {len(list(retriever_int.docstore.yield_keys()))} stored, children "
+                f"{len(child)} split vs {count} embedded. Rebuilding re-embeds the whole corpus, which costs "
+                f"money, so it is not done as a side effect: call add_parent_child_docs(rebuild=True) to ask "
+                f"for it."
+            )
         else:
             # DROP REBUILD
             keys = list(retriever_int.docstore.yield_keys())
