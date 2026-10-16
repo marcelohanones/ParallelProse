@@ -66,19 +66,17 @@ def test_route_after_e_first_retries_only_when_a_book_is_left_miss():
         "corpora": {"A": corpus_slot("ok"), "B": corpus_slot("silent")}}) == "done"
 
 
-def test_retriever_forwards_skipped_slots_unchanged(monkeypatch):
-    monkeypatch.setattr(ag, "bridged_tools_by_corpus", {})
-    monkeypatch.setattr(ag, "retrieval_agents_by_corpus", {})
+def test_retriever_recomputes_every_book_with_the_original_query(monkeypatch):
+    # the joint cap needs both books, so an "ok" book is recomputed too -- with the query it was first delivered
+    # under -- and both keys stay present (the state invariant: no slot is dropped)
+    import ParallelProse.delivery as delivery
+    calls = []
 
-    async def no_tools(client, corpus):
-        return []
+    def fake_deliver(queries):
+        calls.append(dict(queries))
+        return {"A": [(3, "a-new")], "B": [(7, "b-new")]}
 
-    class MustNotRetrieve:
-        async def ainvoke(self, *args, **kwargs):
-            raise AssertionError("a skipped book must not be retrieved again")
-
-    monkeypatch.setattr(ag, "mcp_tools_as_langchain_tools", no_tools)
-    monkeypatch.setattr(ag, "create_agent", lambda **kwargs: MustNotRetrieve())
+    monkeypatch.setattr(delivery, "deliver", fake_deliver)
     lineage = [{"iteration": 0, "tool": "call_parent_retriever", "args": {"query": "q"}, "forced_retriever": False}]
     state = reflection_state({
         "A": corpus_slot("ok", chunks=["a1"], lineage=lineage, reason="ra"),
@@ -87,32 +85,24 @@ def test_retriever_forwards_skipped_slots_unchanged(monkeypatch):
 
     out = asyncio.run(ag.retriever(state))
 
-    assert out["corpora"]["A"] == {"chunks": ["a1"], "lineage": lineage, "label": "ok", "reason": "ra",
-                                   "narrowed_query": None, "silence_cause": None, "P": None, "retry_used": False}
-    assert out["corpora"]["B"] == {"chunks": ["b1"], "lineage": [], "label": "silent", "reason": "rb",
-                                   "narrowed_query": None, "silence_cause": None, "P": None, "retry_used": False}
+    assert calls == [{"A": "q", "B": "q"}]
+    assert out["corpora"]["A"]["chunks"] == ["a-new"]
+    assert out["corpora"]["A"]["label"] == "ok" and out["corpora"]["A"]["reason"] == "ra"
+    assert out["corpora"]["A"]["lineage"][-1]["tool"] == "deliver_contract"
+    assert out["corpora"]["A"]["lineage"][-1]["addresses"] == [3]
+    assert out["corpora"]["B"]["chunks"] == ["b-new"]
+    assert out["corpora"]["B"]["label"] == "silent" and out["corpora"]["B"]["reason"] == "rb"
 
 
 def test_retriever_retries_a_miss_with_its_narrowed_query(monkeypatch):
-    monkeypatch.setattr(ag, "bridged_tools_by_corpus", {})
-    monkeypatch.setattr(ag, "retrieval_agents_by_corpus", {})
+    import ParallelProse.delivery as delivery
+    calls = []
 
-    async def no_tools(client, corpus):
-        return []
+    def fake_deliver(queries):
+        calls.append(dict(queries))
+        return {"A": [(12, "passage")], "B": [(7, "b-new")]}
 
-    seen = []
-
-    class RecordingAgent:
-        async def ainvoke(self, payload, config=None):
-            seen.append(payload["messages"][0].content)
-            return {"messages": [
-                AIMessage(content="", tool_calls=[{"id": "t1", "name": "call_parent_retriever",
-                                                   "args": {"query": "narrow"}}]),
-                ToolMessage(content=json.dumps(["passage"]), tool_call_id="t1", status="success"),
-            ]}
-
-    monkeypatch.setattr(ag, "mcp_tools_as_langchain_tools", no_tools)
-    monkeypatch.setattr(ag, "create_agent", lambda **kwargs: RecordingAgent())
+    monkeypatch.setattr(delivery, "deliver", fake_deliver)
     state = reflection_state({
         "A": corpus_slot("miss", chunks=[], narrowed_query="narrow"),
         "B": corpus_slot("ok", chunks=["b1"]),
@@ -120,10 +110,11 @@ def test_retriever_retries_a_miss_with_its_narrowed_query(monkeypatch):
 
     out = asyncio.run(ag.retriever(state))
 
-    assert seen == ["narrow"]
+    assert calls == [{"A": "narrow", "B": "q"}]
     assert out["corpora"]["A"]["chunks"] == ["passage"]
-    assert out["corpora"]["A"]["lineage"] == [{"iteration": 1, "tool": "call_parent_retriever",
-                                               "args": {"query": "narrow"}, "forced_retriever": False}]
+    assert out["corpora"]["A"]["lineage"] == [{"iteration": 1, "tool": "deliver_contract",
+                                               "args": {"query": "narrow"}, "forced_retriever": False,
+                                               "addresses": [12]}]
 
 
 def test_composer_builds_findings_for_ok_books_only(monkeypatch):

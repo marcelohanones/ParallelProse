@@ -203,94 +203,28 @@ _server_task: asyncio.Task | None = None  # guard to void re-calling
 
 # MARK: RETRIEVER
 async def retriever(state: ReflectionState):
-    """This function retrieves chunks over a query, once per book in state["corpora"]."""
-
-    # 1 - This section gets server tools and agent creation, per-book.
-    global bridged_tools_by_corpus, retrieval_agents_by_corpus  # caches mcp and create_agent calls.
+    """Delivers the contract's paragraphs for every book, in one pass. The joint cap needs both books at once, so
+    every call recomputes both: a book that was missed is probed with its narrowed query, any other book with the
+    original query it was first delivered under."""
+    from ParallelProse.delivery import deliver  # lazy: delivery -> g2_reach -> quote_check imports this module
+    queries = {corpus_id: (state["corpora"][corpus_id]["narrowed_query"]
+                           if state["corpora"][corpus_id]["label"] == "miss" else state["query"])
+               for corpus_id in state["corpora"]}
+    delivered = deliver(queries)
     corpora_updates = {}
-
-    for corpus_id in state["corpora"]:
-        if corpus_id not in bridged_tools_by_corpus:  # have I already built the tools for this book ?
-            bridged_tools_by_corpus[corpus_id] = await mcp_tools_as_langchain_tools(http_client,
-                                                                                    corpus_id)  # if no, create it.
-        bridged_tools = bridged_tools_by_corpus[corpus_id]  # if yes, use the cached one.
-        if corpus_id not in retrieval_agents_by_corpus:
-            retrieval_agents_by_corpus[corpus_id] = create_agent(
-                model=llm,
-                tools=bridged_tools,
-                middleware=[
-                    ModelCallLimitMiddleware(run_limit=MAX_ITERATIONS),
-                    ToolCallLimitMiddleware(run_limit=MAX_TOOL_CALLS, exit_behavior="end"),
-                ],
-                system_prompt=system_prompt,
-            )
-        retrieval_agent = retrieval_agents_by_corpus[corpus_id]
-
-        # 2 - This section decides whether to Retrieve w/ what query.
-        if state["corpora"][corpus_id]["label"] is None:  # first-run, label not yet set.
-            argument = state["query"]
-        elif state["corpora"][corpus_id]["label"] == "miss":
-            argument = state["corpora"][corpus_id]["narrowed_query"]
-        else:
-            corpora_updates[corpus_id] = {
-                "chunks": state["corpora"][corpus_id]["chunks"],
-                "lineage": state["corpora"][corpus_id]["lineage"],
-                "label": state["corpora"][corpus_id]["label"],
-                "reason": state["corpora"][corpus_id]["reason"],
-                "narrowed_query": None,
-                "silence_cause": state["corpora"][corpus_id]["silence_cause"],
-                "P": state["corpora"][corpus_id]["P"],
-                "retry_used": state["corpora"][corpus_id]["retry_used"],
-            }
-            continue
-        result = await retrieval_agent.ainvoke(
-            {"messages": [HumanMessage(content=argument)]},
-            config={"tags": ["role:retrieval_agent"]},
-        )
-        # 3 - setting the accumulators
-        chunks_list = []
-        tool_call_ids = set([])
-        lineage_dict = []
-
-        # 4 - filtering succeeded messages before chunks and tool calls append.
-        for msg in result["messages"]:
-            if isinstance(msg, ToolMessage) and msg.status == "success":
-                chunks_list.extend(json.loads(msg.content))
-                tool_call_ids.add(msg.tool_call_id)
-        # 5 - getting lineage from succeeded tool calls.
-        for msg in result["messages"]:
-            if isinstance(msg, AIMessage):
-                for tc in msg.tool_calls:
-                    if tc["id"] in tool_call_ids:
-                        lineage_dict.append({"iteration": state["iteration"],
-                                             "tool": tc["name"],
-                                             "args": tc["args"],
-                                             "forced_retriever": False
-                                             })
-        # forcing retriever
-        if not chunks_list:
-            async with http_client as client:
-                r = await client.call_tool(FALLBACK_TOOL,
-                                           {"query": argument,
-                                            "corpus": corpus_id})
-                chunks_list.extend(r.data)
-                lineage_dict.append(
-                    {
-                        "iteration": state["iteration"],
-                        "tool": "call_parent_retriever",
-                        "args": {"query": argument},
-                        "forced_retriever": True
-                    }
-                )
+    for corpus_id, slot in state["corpora"].items():
+        units = delivered[corpus_id]
         corpora_updates[corpus_id] = {
-            "chunks": chunks_list,
-            "lineage": state["corpora"][corpus_id]["lineage"] + lineage_dict,
-            "narrowed_query": state["corpora"][corpus_id]["narrowed_query"],
-            "label": state["corpora"][corpus_id]["label"],
-            "reason": state["corpora"][corpus_id]["reason"],
-            "silence_cause": state["corpora"][corpus_id]["silence_cause"],
-            "P": state["corpora"][corpus_id]["P"],
-            "retry_used": state["corpora"][corpus_id]["retry_used"],
+            "chunks": [text for _, text in units],
+            "lineage": slot["lineage"] + [{"iteration": state["iteration"], "tool": "deliver_contract",
+                                           "args": {"query": queries[corpus_id]}, "forced_retriever": False,
+                                           "addresses": [address for address, _ in units]}],
+            "narrowed_query": slot["narrowed_query"],
+            "label": slot["label"],
+            "reason": slot["reason"],
+            "silence_cause": slot["silence_cause"],
+            "P": slot["P"],
+            "retry_used": slot["retry_used"],
         }
     return {"corpora": corpora_updates}
 

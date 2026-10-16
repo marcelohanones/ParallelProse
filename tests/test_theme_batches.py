@@ -137,6 +137,17 @@ def test_retrieval_diagnostics_tolerates_a_book_missing_from_side_target():
     assert result["B"]["silence_cause"] == "absence"
 
 
+def test_retrieval_diagnostics_carries_delivered_addresses_into_the_run_record():
+    # the item 53 address travels deliver -> retriever lineage -> run record (C2 on real runs, not only the artifact)
+    lineage = [{"iteration": 1, "tool": "deliver_contract", "args": {"query": "q"}, "forced_retriever": False,
+                "addresses": [12, 3, 40]}]
+    corpora = {"A": {"label": "ok", "reason": "r", "lineage": lineage, "silence_cause": None}}
+
+    result = tb.retrieval_diagnostics(corpora, side_target={"A": True})
+
+    assert result["A"]["lineage"][-1]["addresses"] == [12, 3, 40]
+
+
 def test_side_is_target_reads_the_corpora_not_the_composer():
     corpora = {"A": {"chunks": []}, "B": {"chunks": []}}
 

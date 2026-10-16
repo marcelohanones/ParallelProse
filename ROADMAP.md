@@ -49,6 +49,20 @@
   never scored against the instrument), and the first **evaluation experiment** actually run with `LANGSMITH_TRACING`
   on, which the Backlog has held since 2026-10-12 and which item 48's instrument can now score. Each item gets its own
   budget line: the ~$1.00 ceiling closed with item 48's calibration.
+- **Stage 2, the retrieval redesign (in progress, opened 2026-10-16)** — **three layers, each with its own job:
+  roadmap = the work order (slots 51, 52, 53...); stage-2 item = G1, G2, G3..., one at a time, occupying the
+  slot; problem = the numbered inventory of what was raised for stage 2 (1-13, numbered once and kept), which is
+  where a new finding is written before it ever reaches the queue.** The links: **G1 = problems 6-12 = slot 51** ·
+  **G2 = problems 1-2 = slot 52** · **G3 = problem 13 = slot 53**. Causes and measurements stay in
+  `docs/stage2_retrieval_map_2026-10-16.md` (§1 the inventory, §2 the grouping). Current queue: **53** the
+  delivery unit (G3, closed 2026-10-16, residuals recorded) → **54** scattered answers (G4, next) → **55** material versus the block's question (G5) →
+  **56** the search record (G6, closes the stage).
+  **Item 51 (G1, ingest) closed 2026-10-16**; **item 52 (G2, one probe two lexicons) closed 2026-10-16** — dense
+  fixed channel, passage delivery, the query verbatim: **17/20 two-sided** (A 17/20 · B 20/20) inside a per-entry
+  cap of 88,120 chars/query, at US$ 0,00008 + US$ 0,00001 for the expansion round that measured vocabulary
+  expansion and bought nothing. The residue has names and a shape: g02, g22, g24, all book A, all **scattered
+  answers** — a single probe ranks one region of a book at a time, so the second anchor of a thesis whose evidence
+  sits in two distant places never arrives in the same delivery; that is item 54, opened below.
 - **RAG-Tetris** — a separate future project (comparing code across versions), out of scope here.
 
 Suggested build order below follows dependency, not memory-entry order: state shape and the merge come first because
@@ -1625,6 +1639,199 @@ is"`, and a `p1` paragraph field was reported from a document instead of from th
 existed at all.
 
 
+### 52. Stage 2, G2: one probe, two lexicons — closed
+
+**Status: built, measured and closed 2026-10-16.** Second item of the retrieval-stage redesign, settled by the
+same CRITIQUE loop (`CC-178`-`CC-233` / `DSH-178`-`DSH-219`). The item asked whether **one probe** can reach the
+material that answers a thesis in **both** books, when each book answers in its own vocabulary. It is not a tuning
+item: it exists because the vocabulary lever was the project's standing hypothesis, and the loop's job was to
+measure the levers instead of arguing them. Everything below reproduces locally: `src/ParallelProse/g2_reach.py`
+(the measuring stick), `g2_expand.py` (the expansion round), `data/eval/g2_*.json` (the paid records).
+
+**The closing bar, three conditions, checkable with no model and no label,** read on the delivery **after
+per-entry truncation** and pre-registered before the closing round:
+
+| | measured |
+|---|---|
+| 1. two-sided reach on the 20 span-attested entries | **17/20** (bar >= 14/20) |
+| 2. no book below 16/20 on its own | **A 17/20 - B 20/20** |
+| 3. characters per book per entry <= 15% of the book, per query <= the fixed cap | **A <= 8,6% - B <= 14,87%, cap 88.120** |
+
+**What moved the number, and what did not - all measured, none argued.** The three channels at k=4 on the
+attested sample: BM25 **0/20** two-sided, dense **10/20**, ensemble 0,5/0,5 **4/20** - fusing a channel that
+reaches nothing into one that reaches something **costs** reach, so the weights were dropped and the channel
+became **fixed and deterministic** (the tool-choosing agent picks the parent retriever in 724 of 783 recorded
+calls: the choice was paid for and not exercised, and the contract's claim that the ensemble runs was false in
+production). Raising k is a lever in dense and not in BM25 - the five single-anchor entries the lexical channel
+never locates sit at dense ranks 2-99. What **blocked** the bar was the character ceiling: 1,5x today's k=4
+delivery buys **5-6 parents**, while the remaining scattered failures need k >= 17-49. Rewriting the ceiling as a
+multiple of the **measured** p95 of today's delivery (post-G1: 51.835 chars/query joint, from a replay of 269
+recorded calls) and letting it buy **passages** instead of parents is what bought the k - **the delivery unit is
+the lever, which is why problem 13 is a dependency of this bar and not its successor.**
+
+**The closing round** (dense, fixed, `deep_k=800`, query verbatim, k = 32 A / 26 B, cap 88.120 per query, 15% per
+book per entry, verified per entry with tail truncation): paragraph unit **17/20 two-sided** (A 17/20 - B 20/20);
+the parent unit with the same probe **16/20** and **five entries over the cap**; parent with fused formulations
+17/20 with one over - under condition 3 read literally, **the paragraph unit is the only configuration that
+satisfies all three**, which is the second, independent reason the passage is the delivery unit. The three fixed
+formulations (`formulations()`) were built, tested and measured: in the dense channel they buy **+1 in the parent
+unit and -1 in the paragraph unit**, so the round closes on the **query verbatim** and keeps them available.
+
+**The expansion round, which measured the last vocabulary lever and closed it.** `g2_expand.py` implements
+pseudo-relevance feedback mechanically (terms counted from the passages the first pass already returned; no model;
+a pure function of the query; every condition-6 rejection recorded): **17/20 -> 17/20**, no entry changed state,
+zero rejections once anchor vocabulary is pruned out of the probe. The registered probes show why: the
+neighbourhood of an anchor shares the anchor's own words, condition 6 forbids them, and what survives can only
+**reinforce the region the first pass already found**. Cost US$ 0,00001. Vocabulary expansion is measured and
+spent; reach is not a vocabulary problem at this stage.
+
+**What this item does not fix - the residue, named and classified.** g02, g22 and g24, all in book A, second
+anchor at paragraph rank 59, 59 and 194 - and the per-shape split of the closing round says what the aggregate
+hides: **scattered answers 8/10, single-anchor 9/10**, the two scattered failures being the two largest distances
+(36.427 and 85.303 chars). The failure mode is **co-visibility**: an expectation with `min_hits` >= 2 counts its
+anchors inside the same delivered set, and one probe ranks one region of a book at a time. That is a property of
+what one retrieval act is, not of the retriever's quality - and it is **not** what this item's bar pre-registered,
+which measures reach. By Markim's call on 2026-10-16 the item **closes as specified and the class becomes its own
+issue**, opened right below instead of folded into a number that never promised it.
+
+**Registration belongs to G3, and its raw collection already exists.** The contract's "every search registers the
+vocabulary attempted in each book" (§6) is not this item's deliverable: the graph already records the probe it
+actually sent, per book and per iteration, in `corpus.lineage` (`{"iteration", "tool", "args", "forced_retriever"}`,
+`agent.py:265-269` + the fallback at `:277`), and the paid records carry every measured probe per entry and book
+outside the graph. What G3 owes is the **form** of that record - the field that makes a search, and its absence,
+conferable without a model (problem 5; the "found/not found" end pairs with G1's declared-refusal rule, problem 4).
+Built during the search, closed last: the map's §3 order, unchanged.
+
+**Cost reconciled: US$ 0,00008** (487 embeddings, 4.079 tokens, zero LLM calls, zero rebuild), plus **US$ 0,00001**
+for the expansion round. The intermediate rounds were $0: BM25 is local and every paid ranking was persisted
+(`--save`), so the weight sweeps, the budget frontiers and the audits were re-derived from disk.
+
+**Ledger errors worth carrying - one family, four instances.** A number read outside the protocol that makes it
+meaningful passed for a property of the system: a target truncated to 200 chars (30/40 where integral containment
+reads 23/40), a `confidence` field that never existed in code, a "ceiling" that was a property of the **undeclared
+window** (the five "unreachable" anchors are all located at `deep_k=800`), and an equal-characters unit comparison
+declared satisfied while both units sat near zero. Two more of the same shape were caught during the loop: five of
+six announced configurations violating the per-entry cap they were reported under, and a bar raised from 14/20 to
+16/20 after the data was in - withdrawn unaided. The rule that catches all of them: **state the protocol beside
+the number, and let the number fire against us.**
+
+
+### 53. Stage 2, G3: the delivery to the composer and the judges is the parent chunk, not the passage
+
+**Status: built, measured and closed 2026-10-16, with one residual recorded (2) and one named for a later item (1).** The item the map parked as "problem 13" - a **cause of its own** (the delivery
+contract, not the ingest) that shares only the symptom "unit" with item 51, which is why it never entered G1's
+group. Item 52 measured what it is worth: the closing round ran with the passage as the delivered unit and that is
+the only one of six configurations that satisfies the bar's three conditions per entry - **the unit is what bought
+the k inside the character cap**, so this item is a written dependency of item 52's bar and not its successor.
+
+**The defect, verified in code.** Every consumer of the retrieval reads the parent chunk (~4,000 chars, 2-3
+paragraphs of A and 4-5 of B): `format_context` joins `slot["chunks"]` (`agent.py:306`), `select_sentences`
+lists the sentences of `corpora[cid]["chunks"]` (`agent.py:328`), `verify_quotes` scores against them
+(`quote_check.py:164`), the attribution judge builds its passages from `record["chunks"][book]`
+(`judges.py:463`), and `replay_e` replays over the same shape.
+
+**What the item must deliver.** The passage - the paragraph - as the unit handed to the composer and the judges,
+with its address (`stable_id`, which item 51 minted at the ingest and the stores do not yet carry at the child
+level: child metadata is `{chapter, doc_id}`, and `doc_id` is uuid4). The measured delivery definition is
+already written down and paid for: rank the children, deliver every paragraph the ranked children cover, deduped,
+best first (`g2_reach._as_paragraphs`, the round's P2), truncated by the tail at the cap. What it must not do is
+change the bar it inherited: item 52's three conditions are read on the delivery after truncation.
+
+**Open design questions, to be settled when the item opens (not before):** whether the graph keeps searching over
+children and delivers paragraphs (measured, read-time, no rebuild) or the index gains a paragraph-level address
+(rebuild, US$ 0,0077 known); and how the truncation at the cap interacts with the composer's per-book budget.
+
+
+**Closed 2026-10-16.** What was built: `ParallelProse.delivery.deliver` (`src/ParallelProse/delivery.py`) returns,
+per book, `(address, text)` pairs for the query verbatim, through the dense channel at the contract's k (A 32, B 26),
+the 15% per-book fraction and the 88,120 joint cap (`g2_reach._admit`). The retriever (`agent.py`, `retriever`) calls
+it for both books on every pass and no longer runs the tool-choosing agent; the address travels in the
+`deliver_contract` lineage entry, which `retrieval_diagnostics` and `run_golden_query` already carry into the run
+record. The open design questions above were settled as follows: the graph keeps searching over children and
+delivers paragraphs at read time (no rebuild; `_child_paragraphs` maps children to paragraphs at runtime); the
+address is the **positional** paragraph index (`book_paragraphs`), not `stable_id` (co-signed as M3); the cap is
+applied after the per-book fraction, dropping from the book with more admitted units (ties to B).
+
+Measured on the production path (`src/ParallelProse/g3_verification.py` -> `data/eval/g3_verification_2026-10-16.json`,
+40 embeddings, US$ 0,00000796 per pass, zero LLM): **C1** holds in production, 17/20 two-sided (A 17 - B 20), no
+entry over the joint cap (max 79,555 chars) or the fraction (A 8.58%, B 14.87%). **C2** holds on the delivered
+value: every unit's address is distinct and resolves to the delivered text, and the set matches the instrument in
+40/40 entries-books. **P1** (ordered, cell for cell against the instrument) **fails in 1 of 40** (g26|A: same set,
+different order from index 19); it is recorded as a failure, not rewritten. Earlier runs failed in other entries
+(g06|A, g18|A; g24|B, g25|B, g26|A), which is the evidence for the residual below.
+
+Pre-registration: `data/eval/g3_round_preregistration_2026-10-16.json` (co-signed by both harnesses; P1's status
+records the failure). Cost proof: `data/eval/g3_cost_proof_2026-10-16.json`.
+
+**Residual (1), not blocking, not in the queue:** the delivered **order** depends on the approximate nearest
+neighbour search, so the composer receives the same material in an order that can vary between runs. This is a
+candidate item of its own.
+
+**Residual (2), gate for item 56:** the address path is verified by the verification artifact and by a unit test
+(`test_retrieval_diagnostics_carries_delivered_addresses_into_the_run_record`), but no real run has yet carried an
+address through the full graph. Item 56 names the unit by its address, so the first real run is its entry check; it
+is a paid run and will be estimated before it is made.
+
+
+### 54. Stage 2, G4: scattered answers - one probe cannot see two distant places
+
+**Status: open, opened 2026-10-16 by Markim.** Not a defect of item 52 - it is the class item 52's bar never
+claimed, and it exists in the material independently of any retriever: of the 20 span-attested entries, **10 have a
+scattered side** and **13 of the 40 `ok` expectations need `min_hits` >= 2** with anchors at least 5.000 chars
+apart. The golden set's own design asks for it (4 scattered cells per book; "scattered answers: each anchor from a
+different paragraph, and at least two of them far apart in the book" - `docs/golden_set_spec.md`), so any new pair
+of books reproduces the class.
+
+**The problem, stated so it cannot be confused with reach.** A thesis whose evidence sits in two distant places is
+answered by the **composite** of two passages, and one probe produces one ranking - a view from one point: the near
+region wins, the far one stays buried. Measured: g02 36.427 chars and g22 85.303 chars between anchors, and after
+four fixed formulations, three fused probes, two channels, two delivery units and a paid expansion round, the
+residue is exactly these. It is not "the retriever did not find it": the retriever found one of the two, correctly.
+
+**What is open (conceptual, before any mechanism):**
+
+- **Where the limit belongs.** Retrieval (a second act of search over the same book) or the judgment that consumes
+  it (the E check and the dossier label, so an entry whose second anchor never arrived is published as *partial*
+  instead of `ok`)? Not alternatives in theory, but different items with different costs.
+- **What the retrieval stage promises.** "I found a passage that carries the answer" is what it can attest today.
+  A thesis needing two passages asks for a synthesis the stage was never defined to deliver: the contract's
+  `silencio_atestado_por_busca` covers *absence*, and nothing today covers *partial*.
+- **Whether the shape is knowable before searching.** If a thesis's shape (one place or two) were declared before
+  the search, the two paths could differ; today the shape is only visible after the fact, in the anchors.
+
+**Already measured, so it is not re-litigated here:** vocabulary is not the lever (item 52's expansion round);
+depth alone is not either (rank 194 is reachable only at a character cost no composer can afford); the failure is
+uniform across every mechanism tried; and item 52's bar was met without covering this class.
+
+**Position: item 54, right after item 53** (the delivery unit) - it is a reach problem, so it comes before the
+checks that consume reach, and it is the one class where the product's promise and the stage's definition visibly
+differ.
+
+
+### 55. Stage 2, G5: nothing confronts the returned material with the block's question
+
+**Status: open, queued.** Was group G4 in the map's own grouping (problem 3): material comes back and does not
+answer the question the block asks (`no_shared_question` in the editorial contract). It exists only after
+material returns, which is why it sits after the reach items: the check reads what 53 and 54 deliver. Its bar and
+its mechanism are not designed here - the item is parked in the queue, by the rule that a mechanism is only
+discussed when the item before it closes.
+
+
+### 56. Stage 2, G6: the search leaves no record
+
+**Status: open, queued, closes the stage. Was group G3 in the map's own grouping** (problems 5 and 4): every
+search must register the vocabulary it attempted in each book, and a search that found nothing must say so with a
+reason of its own instead of an empty result (`silencio_atestado_por_busca`; the "found/not found" end pairs with
+item 51's declared-refusal rule). The raw collection already exists - `corpus.lineage` records `{iteration, tool,
+args, forced_retriever}` per book per iteration (`agent.py:265-269`), and the paid G2 records carry every measured
+probe per entry and book - so what this item owes is the **form**: the field that makes a search, and its absence,
+conferable without a model. It is last for a reason that is not size: the record must name the delivered unit
+(defined by 53) and carry the state of a scattered thesis (defined by 54), so designing it earlier designs it
+against definitions that are still moving. Verification is mechanical and model-free: the same query re-run
+returns the same record; every search has a stated probe and a found/not-found verdict with a reason; the record
+resolves to a `stable_id`. Cost US$ 0.
+
+
 ### Backlog (deferred, not dropped)
 
 **Faithfulness judge: hand labels in the (claim, sentence) pair form. Done 2026-10-14 — the set exists, and item 47
@@ -1723,10 +1930,12 @@ addressed when it actually starts.
 
 Uma releitura do projeto contra as bibliotecas de 2026 produziu três briefs de pesquisa em `docs/research/` e um
 plano de arquitetura de referência em `docs/item50_greenfield_plan.md`. **Nada daquele plano foi implementado**: o
-módulo de spike foi rascunhado e removido na mesma sessão. O que mudou em `src/` desde então veio de outra frente — o
-redesenho da etapa 2 por causa, cujo primeiro item é o **item 51** (G1, fechado em 2026-10-16) — e não deste plano.
-Itens 49 e 50 não têm seção numerada aqui: o 49 (o lado do produtor) está parado atrás da decisão abaixo, e o 50 é
-este bloco.
+módulo de spike foi rascunhado e removido na mesma sessão.
+
+O que mudou em `src/` desde então veio de outra frente — o redesenho da etapa 2 por causa, que até 2026-10-16
+produziu os **itens 51** (G1, ingest, fechado), **52** (G2, uma sonda dois léxicos, fechado, 17/20 dois lados) e
+**53** (respostas espalhadas, aberto) — e não deste plano. Itens 49 e 50 não têm seção numerada aqui: o 49 (o lado do
+produtor) está parado atrás da decisão abaixo, e o 50 é este bloco.
 
 A conclusão é positiva mas estreita: a simplificação grande está na **citação nativa** (a API do provedor devolve
 o span), que apaga o picker de sentença, a metade verificadora do `quote_check` e o juiz de faithfulness rodando
